@@ -5,9 +5,14 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# ══ 全局 pyqtgraph 配置 — GPU 加速 ══
+# ══ 全局 pyqtgraph 配置 — GPU 加速 (PyInstaller 打包时可能不可用) ══
 import pyqtgraph as pg
-pg.setConfigOptions(antialias=True, useOpenGL=True)
+_use_opengl = True
+try:
+    from OpenGL import GL
+except ImportError:
+    _use_opengl = False
+pg.setConfigOptions(antialias=True, useOpenGL=_use_opengl)
 
 # ── 修复 Qt DLL 路径 ──
 import PyQt5
