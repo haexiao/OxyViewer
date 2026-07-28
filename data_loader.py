@@ -31,6 +31,9 @@ def load_xlsx(filepath):
             temperature.append(float(row[8]))
             pressure.append(float(row[10]))
 
+        if not timestamps:
+            raise ValueError('xlsx contains no data rows (sheet 6 is empty)')
+
         base = timestamps[0]
         time_seconds = [(t - base).total_seconds() for t in timestamps]
 
@@ -65,15 +68,16 @@ def load_params(csv_path):
                 'meas_time': row['meas_time'].strip(),
                 'meas_type': row.get('meas_type', '').strip(),
                 'rmr_type': row.get('rmr_type', '').strip(),
+                'chamber_id': row.get('chamber_ID', '').strip(),
                 'meas_batch': row.get('meas_batch', '').strip(),
                 'temperature': row.get('temperature', '').strip(),
-                'cycles': int(row['cycles']),
-                'initial': int(row['initial']),
-                'cycle_length': int(row['cycle_length']),
-                'cycle_start': int(row['cycle_start']),
-                'cycle_time': int(row['cycle_time']),
-                'flush_time': int(row['flush_time']),
-                'all_time': int(row['all_time']),
+                'cycles': int(row.get('cycles', 0) or 0),
+                'initial': int(row.get('initial', 0) or 0),
+                'cycle_length': int(row.get('cycle_length', 0) or 0),
+                'cycle_start': int(row.get('cycle_start', 0) or 0),
+                'cycle_time': int(row.get('cycle_time', 0) or 0),
+                'flush_time': int(row.get('flush_time', 0) or 0),
+                'all_time': int(row.get('all_time', 0) or 0),
             }
             params_list.append(p)
     return params_list

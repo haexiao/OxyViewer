@@ -186,6 +186,21 @@ def render_local(pw, data, cycle_bounds, cycle_idx,
     if cycle_idx < 0 or cycle_idx >= len(cycle_bounds):
         return
 
+    # 当 cycle_bounds 为空时，只显示原始数据(无循环标记)
+    if not cycle_bounds:
+        sd = _div(time_unit)
+        tx = np.array(data['time_seconds']) / sd
+        oxy = np.array(data['oxygen'])
+        if show_lines:
+            pw.plot(tx, oxy, pen=pg.mkPen(C_O2, width=line_width),
+                    name='O2')
+        if show_points:
+            pw.plot(tx, oxy, pen=None, symbol='o', symbolSize=point_size,
+                    symbolBrush=C_O2, symbolAlpha=140, name='_dots')
+        pi.setLabel('bottom', _xlbl(time_unit))
+        pi.setLabel('left', 'O2 (mg/L)')
+        return
+
     sd = _div(time_unit)
     cb = cycle_bounds[cycle_idx]
     si, ei = cb['start_idx'], cb['end_idx']

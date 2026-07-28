@@ -35,12 +35,17 @@ class OxyViewer(QtWidgets.QMainWindow):
         # ── 状态变量 ──
         self._data = None
         self._params_list = None
-        self._params = None
+        self._params = None              # 当前选中的循环参数行
         self._cycle_bounds = None
         self._current_cycle = 1
-        self._meas_type = 'fish'
         self._show_points = True
         self._show_lines = True
+        self._active_channel = 1          # 当前选中的通道
+        # 通道类型: {channel_num: 'fish'|'blank'|'special'}
+        self._channel_types = {}
+        self._channel_enabled = {}        # {channel_num: bool}
+        self._channel_buttons = {}        # {channel_num: QPushButton}
+        self._channel_rows = {}           # {channel_num: QWidget}
 
         self._build_ui()
 
@@ -66,10 +71,18 @@ class OxyViewer(QtWidgets.QMainWindow):
         splitter.setStretchFactor(1, 1)
 
     def _build_left_panel(self, parent):
-        """左侧控制面板 — 按用户要求的布局。"""
+        """左侧控制面板 — 新布局：数据文件夹/参数文件/加载数据/数据日期/通道设置/循环参数/图像设置"""
         panel = QtWidgets.QWidget()
         panel.setFixedWidth(270)
-        vbox = QtWidgets.QVBoxLayout(panel)
+
+        # 顶层用 QScrollArea 防止窗口缩小时挤压
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet('QScrollArea { border: none; }')
+
+        inner = QtWidgets.QWidget()
+        vbox = QtWidgets.QVBoxLayout(inner)
         vbox.setContentsMargins(10, 8, 10, 8)
         vbox.setSpacing(5)
 
@@ -83,14 +96,61 @@ class OxyViewer(QtWidgets.QMainWindow):
         def _sep():
             line = QtWidgets.QFrame()
             line.setFrameShape(QtWidgets.QFrame.HLine)
-            line.setFrameShadow(QtWidgets.QFrame.Sunken)
-            line.setStyleSheet('color: #ddd;')
+            line.setStyleSheet('color: #ddd; margin: 2px 0;')
             vbox.addWidget(line)
 
         def _small(text, color='#888'):
             lbl = QtWidgets.QLabel(text)
             lbl.setStyleSheet(f'font-size: 8pt; color: {color}; padding-left: 2px;')
             return lbl
+
+        # ── 可折叠 section ──
+        self._collapsed = {}  # {title: bool}
+
+        def _fold_section(title):
+            """创建可折叠区域，返回 (add_to_vbox, content_layout)。"""
+            container = QtWidgets.QWidget()
+            cvbox = QtWidgets.QVBoxLayout(container)
+            cvbox.setContentsMargins(0, 0, 0, 0)
+            cvbox.setSpacing(2)
+
+            # 标题行
+            header = QtWidgets.QWidget()
+            hbox = QtWidgets.QHBoxLayout(header)
+            hbox.setContentsMargins(0, 2, 0, 2)
+            lbl = QtWidgets.QLabel(title)
+            lbl.setStyleSheet(
+                'font-weight: bold; color: #000; '
+                'border-bottom: 1px solid #ccc; padding-bottom: 2px;')
+            btn = QtWidgets.QPushButton('▼')
+            btn.setFixedSize(18, 18)
+            btn.setFlat(True)
+            btn.setStyleSheet('font-size: 10px; padding: 0;')
+            hbox.addWidget(lbl)
+            hbox.addStretch()
+            hbox.addWidget(btn)
+            cvbox.addWidget(header)
+
+            # 内容区
+            content = QtWidgets.QWidget()
+            content_layout = QtWidgets.QVBoxLayout(content)
+            content_layout.setContentsMargins(0, 0, 0, 0)
+            content_layout.setSpacing(4)
+            cvbox.addWidget(content)
+
+            self._collapsed[title] = False
+
+            def toggle():
+                collapsed = self._collapsed[title]
+                collapsed = not collapsed
+                self._collapsed[title] = collapsed
+                content.setVisible(not collapsed)
+                btn.setText('▶' if collapsed else '▼')
+
+            btn.clicked.connect(toggle)
+
+            vbox.addWidget(container)
+            return container, content_layout
 
         # ════════════════════════════════════════════════
         # 数据文件夹
@@ -102,19 +162,13 @@ class OxyViewer(QtWidgets.QMainWindow):
         btn = QtWidgets.QPushButton('浏览')
         btn.setFixedWidth(48)
         btn.clicked.connect(self._browse_data_dir)
+        btn_open = QtWidgets.QPushButton('打开')
+        btn_open.setFixedWidth(48)
+        btn_open.clicked.connect(self._open_data_dir)
         row1.addWidget(self._data_dir_edit)
         row1.addWidget(btn)
+        row1.addWidget(btn_open)
         vbox.addLayout(row1)
-
-        row_ch = QtWidgets.QHBoxLayout()
-        row_ch.addWidget(QtWidgets.QLabel('通道：'))
-        self._ch_combo = QtWidgets.QComboBox()
-        self._ch_combo.addItems([str(i) for i in range(1, 10)])
-        self._ch_combo.setFixedWidth(56)
-        self._ch_combo.currentTextChanged.connect(self._on_channel_change)
-        row_ch.addWidget(self._ch_combo)
-        row_ch.addStretch()
-        vbox.addLayout(row_ch)
 
         _sep()
 
@@ -128,24 +182,13 @@ class OxyViewer(QtWidgets.QMainWindow):
         btn_p = QtWidgets.QPushButton('浏览')
         btn_p.setFixedWidth(48)
         btn_p.clicked.connect(self._browse_params)
+        btn_p_open = QtWidgets.QPushButton('打开')
+        btn_p_open.setFixedWidth(48)
+        btn_p_open.clicked.connect(self._open_params_folder)
         row2.addWidget(self._params_file_edit)
         row2.addWidget(btn_p)
+        row2.addWidget(btn_p_open)
         vbox.addLayout(row2)
-
-        row_type = QtWidgets.QHBoxLayout()
-        row_type.addWidget(QtWidgets.QLabel('测量类型：'))
-        self._rb_fish = QtWidgets.QRadioButton('Fish')
-        self._rb_blank = QtWidgets.QRadioButton('Blank')
-        self._rb_fish.setChecked(True)
-        self._rb_fish.toggled.connect(self._on_type_change)
-        # 独立 ButtonGroup — 避免和时间格式 radio 互斥
-        self._type_group = QtWidgets.QButtonGroup(panel)
-        self._type_group.addButton(self._rb_fish)
-        self._type_group.addButton(self._rb_blank)
-        row_type.addWidget(self._rb_fish)
-        row_type.addWidget(self._rb_blank)
-        row_type.addStretch()
-        vbox.addLayout(row_type)
 
         self._params_status = QtWidgets.QLabel('')
         self._params_status.setStyleSheet(
@@ -155,22 +198,93 @@ class OxyViewer(QtWidgets.QMainWindow):
         _sep()
 
         # ════════════════════════════════════════════════
-        # 循环参数
+        # 加载数据
         # ════════════════════════════════════════════════
-        _section('循环参数')
+        self._load_btn = QtWidgets.QPushButton('加载数据')
+        self._load_btn.clicked.connect(self._on_load)
+        self._load_btn.setMinimumHeight(36)
+        self._load_btn.setStyleSheet(
+            'QPushButton { font-weight: bold; font-size: 11pt; '
+            'background-color: #3498db; color: white; border-radius: 4px; }'
+            'QPushButton:hover { background-color: #2980b9; }')
+        vbox.addWidget(self._load_btn)
+
+        # ── 数据日期 ──
+        row_date = QtWidgets.QHBoxLayout()
+        row_date.addWidget(QtWidgets.QLabel('数据日期：'))
+        self._date_edit = QtWidgets.QLineEdit()
+        self._date_edit.setFixedWidth(80)
+        self._date_edit.setPlaceholderText('自动获取')
+        row_date.addWidget(self._date_edit)
+        row_date.addStretch()
+        vbox.addLayout(row_date)
+
+        self._progress = QtWidgets.QProgressBar()
+        self._progress.setRange(0, 0)
+        self._progress.setVisible(False)
+        self._progress.setFixedHeight(6)
+        vbox.addWidget(self._progress)
+
+        _sep()
+
+        # ════════════════════════════════════════════════
+        # 通道设置 (可折叠)
+        # ════════════════════════════════════════════════
+        _ch_container, _ch_cl = _fold_section('通道设置')
+
+        row_range = QtWidgets.QHBoxLayout()
+        row_range.addWidget(QtWidgets.QLabel('通道范围：'))
+        self._ch_from = QtWidgets.QLineEdit('1')
+        self._ch_from.setFixedWidth(36)
+        self._ch_from.returnPressed.connect(self._refresh_channel_rows)
+        row_range.addWidget(self._ch_from)
+        row_range.addWidget(QtWidgets.QLabel('~'))
+        self._ch_to = QtWidgets.QLineEdit('9')
+        self._ch_to.setFixedWidth(36)
+        self._ch_to.returnPressed.connect(self._refresh_channel_rows)
+        row_range.addWidget(self._ch_to)
+        row_range.addStretch()
+        _ch_cl.addLayout(row_range)
+
+        # 通道列表容器
+        self._ch_list = QtWidgets.QWidget()
+        self._ch_list_layout = QtWidgets.QVBoxLayout(self._ch_list)
+        self._ch_list_layout.setContentsMargins(0, 0, 0, 0)
+        self._ch_list_layout.setSpacing(1)
+        _ch_cl.addWidget(self._ch_list)
+
+        self._rebuild_channel_rows(1, 9)
+
+        self._save_ch_btn = QtWidgets.QPushButton('保存到通道设置')
+        self._save_ch_btn.clicked.connect(self._save_channel_settings)
+        self._save_ch_btn.setMinimumHeight(28)
+        _ch_cl.addWidget(self._save_ch_btn)
+
+        _sep()
+
+        # ════════════════════════════════════════════════
+        # 循环参数 (可折叠)
+        # ════════════════════════════════════════════════
+        _cp_container, _cp_cl = _fold_section('循环参数')
         grid = QtWidgets.QGridLayout()
         grid.setSpacing(2)
 
         self._p_cycles = QtWidgets.QLineEdit()
+        self._p_initial = QtWidgets.QLineEdit()
         self._p_cycle_length = QtWidgets.QLineEdit()
         self._p_cycle_start = QtWidgets.QLineEdit()
         self._p_cycle_time = QtWidgets.QLineEdit()
+        self._p_flush_time = QtWidgets.QLineEdit()
+        self._p_all_time = QtWidgets.QLineEdit()
 
         row_data = [
-            (0, '总循环次数：', self._p_cycles, 'cycles'),
-            (1, '循环总时间(s)：', self._p_cycle_length, 'cycle_length'),
-            (2, '计算斜率起点(s)：', self._p_cycle_start, 'cycle_start'),
-            (3, '循环结束时间(s)：', self._p_cycle_time, 'cycle_time'),
+            (0, '循环数：', self._p_cycles, 'cycles'),
+            (1, '起始偏移(s)：', self._p_initial, 'initial'),
+            (2, '周期(s)：', self._p_cycle_length, 'cycle_length'),
+            (3, '斜率起点(s)：', self._p_cycle_start, 'cycle_start'),
+            (4, '测量(s)：', self._p_cycle_time, 'cycle_time'),
+            (5, '冲洗(s)：', self._p_flush_time, 'flush_time'),
+            (6, '总时长(s)：', self._p_all_time, 'all_time'),
         ]
         for r, label, w, hint in row_data:
             w.setFixedWidth(72)
@@ -178,26 +292,29 @@ class OxyViewer(QtWidgets.QMainWindow):
             grid.addWidget(QtWidgets.QLabel(label), r, 0)
             grid.addWidget(w, r, 1)
             grid.addWidget(_small(hint), r, 2)
-        vbox.addLayout(grid)
+
+        self._p_cycles.setReadOnly(True)
+        self._p_cycles.setStyleSheet('background-color: #e8e8e8; color: #555;')
+        self._p_cycle_length.setReadOnly(True)
+        self._p_cycle_length.setStyleSheet('background-color: #e8e8e8; color: #555;')
+        _cp_cl.addLayout(grid)
 
         self._save_btn = QtWidgets.QPushButton('保存到循环参数')
         self._save_btn.clicked.connect(self._save_params_to_csv)
         self._save_btn.setMinimumHeight(28)
-        vbox.addWidget(self._save_btn)
+        _cp_cl.addWidget(self._save_btn)
 
         self._save_warn = QtWidgets.QLabel('保存前务必备份原参数！')
-        self._save_warn.setStyleSheet(
-            'font-size: 8pt; color: #e74c3c; padding-left: 2px;')
-        vbox.addWidget(self._save_warn)
+        self._save_warn.setStyleSheet('font-size: 8pt; color: #e74c3c; padding-left: 2px;')
+        _cp_cl.addWidget(self._save_warn)
 
         _sep()
 
         # ════════════════════════════════════════════════
-        # 图像设置
+        # 图像设置 (可折叠)
         # ════════════════════════════════════════════════
-        _section('图像设置')
+        _img_container, _img_cl = _fold_section('图像设置')
 
-        # 数据显示 (Temp/Press only, O2 always on)
         row_disp = QtWidgets.QHBoxLayout()
         row_disp.addWidget(QtWidgets.QLabel('数据显示：'))
         self._cb_temp = QtWidgets.QCheckBox('温度')
@@ -207,13 +324,10 @@ class OxyViewer(QtWidgets.QMainWindow):
         row_disp.addWidget(self._cb_temp)
         row_disp.addWidget(self._cb_press)
         row_disp.addStretch()
-        vbox.addLayout(row_disp)
+        _img_cl.addLayout(row_disp)
 
-        # 数据展示 (点大小 / 线粗细)
-        row_style_label = QtWidgets.QLabel('数据展示：')
-        vbox.addWidget(row_style_label)
+        _img_cl.addWidget(QtWidgets.QLabel('数据展示：'))
 
-        # 数据点 + 大小
         row_pt = QtWidgets.QHBoxLayout()
         self._cb_points = QtWidgets.QCheckBox('数据点')
         self._cb_points.setChecked(True)
@@ -227,15 +341,14 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._combo_pt_size.currentTextChanged.connect(self._on_display_change)
         row_pt.addWidget(self._combo_pt_size)
         row_pt.addStretch()
-        vbox.addLayout(row_pt)
+        _img_cl.addLayout(row_pt)
 
-        # 数据线 + 粗细
         row_ln = QtWidgets.QHBoxLayout()
         self._cb_lines = QtWidgets.QCheckBox('数据线')
         self._cb_lines.setChecked(True)
         self._cb_lines.toggled.connect(self._on_display_change)
         row_ln.addWidget(self._cb_lines)
-        row_ln.addWidget(QtWidgets.QLabel(' 粗细：'))
+        row_ln.addWidget(QtWidgets.QLabel(' 宽度：'))
         self._combo_ln_width = QtWidgets.QComboBox()
         self._combo_ln_width.addItems(['0.5', '1', '1.5', '2', '2.5', '3'])
         self._combo_ln_width.setCurrentText('1')
@@ -243,15 +356,14 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._combo_ln_width.currentTextChanged.connect(self._on_display_change)
         row_ln.addWidget(self._combo_ln_width)
         row_ln.addStretch()
-        vbox.addLayout(row_ln)
+        _img_cl.addLayout(row_ln)
 
-        # 趋势线 + 粗细
         row_trend = QtWidgets.QHBoxLayout()
         self._cb_trend = QtWidgets.QCheckBox('趋势线')
         self._cb_trend.setChecked(True)
         self._cb_trend.toggled.connect(self._on_display_change)
         row_trend.addWidget(self._cb_trend)
-        row_trend.addWidget(QtWidgets.QLabel(' 粗细：'))
+        row_trend.addWidget(QtWidgets.QLabel(' 宽度：'))
         self._combo_trend_width = QtWidgets.QComboBox()
         self._combo_trend_width.addItems(['1', '1.5', '2', '2.5', '3'])
         self._combo_trend_width.setCurrentText('2')
@@ -259,53 +371,37 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._combo_trend_width.currentTextChanged.connect(self._on_display_change)
         row_trend.addWidget(self._combo_trend_width)
         row_trend.addStretch()
-        vbox.addLayout(row_trend)
+        _img_cl.addLayout(row_trend)
 
-        # 斜率计算区
         row_slope = QtWidgets.QHBoxLayout()
         self._cb_slope_region = QtWidgets.QCheckBox('斜率计算区')
         self._cb_slope_region.setChecked(True)
         self._cb_slope_region.toggled.connect(self._on_display_change)
         row_slope.addWidget(self._cb_slope_region)
         row_slope.addStretch()
-        vbox.addLayout(row_slope)
+        _img_cl.addLayout(row_slope)
 
-        # 时间格式
         row_time = QtWidgets.QHBoxLayout()
         row_time.addWidget(QtWidgets.QLabel('时间格式：'))
         self._rb_s = QtWidgets.QRadioButton('秒')
         self._rb_m = QtWidgets.QRadioButton('分')
         self._rb_h = QtWidgets.QRadioButton('时')
         self._rb_s.setChecked(True)
-        # 独立 ButtonGroup — 避免和测量类型 radio 互斥
         self._time_group = QtWidgets.QButtonGroup(panel)
         for rb in (self._rb_s, self._rb_m, self._rb_h):
             rb.toggled.connect(self._on_display_change)
             self._time_group.addButton(rb)
             row_time.addWidget(rb)
         row_time.addStretch()
-        vbox.addLayout(row_time)
-
-        # ════════════════════════════════════════════════
-        # 加载按钮
-        # ════════════════════════════════════════════════
-        vbox.addSpacing(8)
-        self._load_btn = QtWidgets.QPushButton('加载数据')
-        self._load_btn.clicked.connect(self._on_load)
-        self._load_btn.setMinimumHeight(36)
-        self._load_btn.setStyleSheet(
-            'QPushButton { font-weight: bold; font-size: 11pt; '
-            'background-color: #3498db; color: white; border-radius: 4px; }'
-            'QPushButton:hover { background-color: #2980b9; }')
-        vbox.addWidget(self._load_btn)
-
-        self._progress = QtWidgets.QProgressBar()
-        self._progress.setRange(0, 0)
-        self._progress.setVisible(False)
-        self._progress.setFixedHeight(6)
-        vbox.addWidget(self._progress)
+        _img_cl.addLayout(row_time)
 
         vbox.addStretch()
+
+        # 装入 QScrollArea 防止缩小时挤压
+        scroll.setWidget(inner)
+        panel_layout = QtWidgets.QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.addWidget(scroll)
         parent.addWidget(panel)
 
         # 加载上次使用的路径
@@ -317,6 +413,274 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._params_file_edit.setText(saved_params)
             if os.path.isfile(saved_params):
                 self._load_params_file(saved_params)
+
+    # ════════════════════════════════════════════════════
+    #  通道行构建
+    # ════════════════════════════════════════════════════
+
+    def _rebuild_channel_rows(self, ch_from, ch_to):
+        """重新构建通道行 (ch_from ~ ch_to)。"""
+        # 清除旧行
+        for w in self._channel_rows.values():
+            w.setParent(None)
+        self._channel_rows.clear()
+        self._channel_buttons.clear()
+
+        for ch in range(ch_from, ch_to + 1):
+            row = QtWidgets.QWidget()
+            hbox = QtWidgets.QHBoxLayout(row)
+            hbox.setContentsMargins(2, 1, 2, 1)
+            hbox.setSpacing(2)
+
+            # 勾选框
+            cb = QtWidgets.QCheckBox()
+            cb.setChecked(self._channel_enabled.get(ch, True))
+            cb.toggled.connect(lambda checked, c=ch: self._on_ch_enabled(c, checked))
+            hbox.addWidget(cb)
+
+            # 通道按钮 (选中时有蓝色高亮)
+            btn = QtWidgets.QPushButton(str(ch))
+            btn.setFixedSize(28, 22)
+            btn.setCheckable(True)
+            btn.setChecked(ch == self._active_channel)
+            btn.clicked.connect(lambda checked, c=ch: self._on_channel_button_clicked(c))
+            self._channel_buttons[ch] = btn
+            hbox.addWidget(btn)
+
+            # Fish / Blank / 特殊 radio buttons
+            group = QtWidgets.QButtonGroup(row)
+            rb_f = QtWidgets.QRadioButton('Fish')
+            rb_b = QtWidgets.QRadioButton('Blank')
+            rb_s = QtWidgets.QRadioButton('特殊')
+            group.addButton(rb_f)
+            group.addButton(rb_b)
+            group.addButton(rb_s)
+            # 根据类型设置默认选中
+            ctype = self._channel_types.get(ch, 'fish')
+            {'fish': rb_f, 'blank': rb_b, 'special': rb_s}[ctype].setChecked(True)
+            # 信号
+            rb_f.toggled.connect(lambda checked, c=ch: self._on_ch_type_changed(c, 'fish'))
+            rb_b.toggled.connect(lambda checked, c=ch: self._on_ch_type_changed(c, 'blank'))
+            rb_s.toggled.connect(lambda checked, c=ch: self._on_ch_type_changed(c, 'special'))
+
+            hbox.addWidget(rb_f)
+            hbox.addWidget(rb_b)
+            hbox.addWidget(rb_s)
+            hbox.addStretch()
+
+            self._channel_rows[ch] = row
+            self._ch_list_layout.addWidget(row)
+
+        self._update_channel_button_styles()
+
+    def _refresh_channel_rows(self):
+        """通道范围变更时重建行。"""
+        try:
+            f = int(self._ch_from.text())
+            t = int(self._ch_to.text())
+            f = max(1, min(f, 99))
+            t = max(f, min(t, 99))
+        except ValueError:
+            return
+        self._rebuild_channel_rows(f, t)
+
+    def _update_channel_button_styles(self):
+        """更新通道按钮样式：选中蓝色，未选中浅灰。"""
+        for ch, btn in self._channel_buttons.items():
+            if btn.isChecked():
+                btn.setStyleSheet(
+                    'font-weight: bold; font-size: 9pt; '
+                    'background-color: #3498db; color: white; border: 1px solid #2980b9;')
+            else:
+                btn.setStyleSheet(
+                    'font-size: 9pt; background-color: #e0e0e0; color: #333; border: 1px solid #ccc;')
+
+    def _on_channel_button_clicked(self, ch):
+        """点击通道按钮：切换活动通道并加载数据。"""
+        if self._active_channel == ch:
+            return
+        self._active_channel = ch
+        self._update_channel_button_styles()
+        # 取消其他按钮的选中
+        for c, btn in self._channel_buttons.items():
+            btn.setChecked(c == ch)
+        # 重新加载该通道数据
+        self._on_load()
+
+    def _on_ch_enabled(self, ch, checked):
+        """勾选/取消通道。"""
+        self._channel_enabled[ch] = checked
+
+    def _on_ch_type_changed(self, ch, ctype):
+        """通道类型变更。"""
+        if ctype == 'special':
+            self._channel_types[ch] = 'special'
+        else:
+            self._channel_types[ch] = ctype
+
+    def _save_channel_settings(self):
+        """保存通道设置到 CSV —— 支持 fish↔特殊↔blank 的行级增删。
+
+        规则:
+        - fish + 逗号分隔 chamber_ID → 通用鱼行
+        - fish + 单个 chamber_ID → 特殊行(独立参数)
+        - blank + 单个 chamber_ID → 空白行
+        - 从 fish 改为特殊 → 新建行(复制原 fish 行参数), 从 fish chamber_ID 移除
+        - 从 特殊 改为 fish → 删除特殊行, 加入 fish chamber_ID
+        - fish ↔ blank → 移动通道号
+        """
+        csv_path = self._params_file_edit.text().strip()
+        if not csv_path or not os.path.isfile(csv_path):
+            QtWidgets.QMessageBox.warning(self, '提示', '请先选择有效的参数文件。')
+            return
+
+        date_str = self._date_edit.text().strip()
+        if not date_str:
+            QtWidgets.QMessageBox.warning(self, '提示', '数据日期不能为空。')
+            return
+
+        import csv
+        rows = []
+        with open(csv_path, 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            rows.append(next(reader))  # header
+            for row in reader:
+                rows.append(row)
+
+        # ── 当前通道分类 ──
+        fish_chs   = [c for c in sorted(self._channel_types)
+                      if self._channel_types[c] == 'fish' and self._channel_enabled.get(c, True)]
+        blank_chs  = [c for c in sorted(self._channel_types)
+                      if self._channel_types[c] == 'blank' and self._channel_enabled.get(c, True)]
+        special_chs = [c for c in sorted(self._channel_types)
+                       if self._channel_types[c] == 'special' and self._channel_enabled.get(c, True)]
+
+        # ── 查找/分类该日期的行 ──
+        fish_general_row = None   # 通用鱼行 (chamber_ID 含逗号 或 空)
+        fish_general_idx = None
+        blank_row = None
+        blank_idx = None
+        special_rows = []         # [(idx, row, chamber_id_str)]
+
+        for i, row in enumerate(rows[1:], 1):
+            if len(row) < 4:
+                continue
+            if row[0].strip() != date_str:
+                continue
+            rmr = row[2].strip()
+            chamber_str = row[3].strip().replace('"', '')
+            ch_ids = [x.strip() for x in chamber_str.split(',') if x.strip()]
+
+            if rmr == 'fish' and (',' in row[3] or not chamber_str or len(ch_ids) > 1):
+                fish_general_row = row
+                fish_general_idx = i
+            elif rmr == 'fish' and len(ch_ids) == 1:
+                special_rows.append((i, row, chamber_str))
+            elif rmr == 'blank':
+                blank_row = row
+                blank_idx = i
+
+        # ── 处理特殊通道 (新建 / 删除) ──
+        # 1. 找出 CSV 中原有的特殊通道
+        csv_special_chs = {int(s[2]): s for s in special_rows}  # {ch: (idx, row, chamber_str)}
+        # 2. 新特殊: 当前有但 CSV 中没有 → 新建行
+        new_special = [c for c in special_chs if c not in csv_special_chs]
+        # 3. 已移除: CSV 有但当前没有 → 删除行, 加回 fish
+        removed_special = [c for c in csv_special_chs if c not in special_chs]
+
+        # ── 执行保存 ──
+        # 反向删除 (避免索引变化)
+        for ch in sorted(csv_special_chs.keys(), reverse=True):
+            if ch in removed_special:
+                # 删除特殊行
+                idx, row, _ = csv_special_chs[ch]
+                del rows[idx]
+                # 调整后续索引
+                for sp in special_rows:
+                    if sp[0] > idx:
+                        sp = (sp[0] - 1, sp[1], sp[2])
+                if blank_idx and blank_idx > idx:
+                    blank_idx -= 1
+                if fish_general_idx and fish_general_idx > idx:
+                    fish_general_idx -= 1
+                # 加回到 fish 列表
+                if ch not in fish_chs:
+                    fish_chs.append(ch)
+                print(f'[save] removed special ch{ch}, added to fish')
+
+        # 新建特殊行——复制通用鱼行参数
+        for ch in new_special:
+            if fish_general_row is None:
+                QtWidgets.QMessageBox.warning(self, '提示',
+                    f'无法创建特殊通道 ch{ch}：该日期无通用鱼行可作为模板。')
+                continue
+            new_row = list(fish_general_row)  # 复制所有参数
+            new_row[3] = str(ch)               # chamber_ID = 单通道号
+            # 插入到通用鱼行之后
+            insert_at = fish_general_idx + 1 if fish_general_idx else 1
+            rows.insert(insert_at, new_row)
+            # 调整索引
+            if blank_idx and blank_idx >= insert_at:
+                blank_idx += 1
+            print(f'[save] created special ch{ch} from fish_general row')
+
+        # 重新排序 fish_chs (可能加入了 removed_special)
+        fish_chs = sorted(set(fish_chs))
+        blank_chs = sorted(set(blank_chs))
+
+        # ── 更新 chamber_ID ──
+        if fish_general_row:
+            fish_general_row[3] = ','.join(str(c) for c in fish_chs) if fish_chs else ''
+        if blank_row:
+            blank_row[3] = ','.join(str(c) for c in blank_chs) if blank_chs else ''
+
+        # ── 写回 ──
+        with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
+            csv.writer(f).writerows(rows)
+
+        self._params_status.setText('通道设置已保存！')
+        QtWidgets.QMessageBox.information(self, '成功', '通道设置已保存到参数文件。')
+
+    def _detect_channels(self, folder):
+        """扫描文件夹, 返回存在的通道号列表。"""
+        existing = []
+        for ch in range(1, 100):
+            if os.path.isfile(os.path.join(folder, f'{ch}.xlsx')):
+                existing.append(ch)
+            elif ch > 15:
+                break
+        return existing
+
+    def _load_channel_types_from_params(self):
+        """从 meas_params.csv 的 chamber_ID 列解析通道类型。"""
+        if not self._params_list:
+            return
+        date_str = self._date_edit.text().strip()
+        if not date_str:
+            return
+        # 重置
+        for ch in range(1, 10):
+            self._channel_types[ch] = 'fish'
+        self._channel_types[1] = 'blank'
+
+        for p in self._params_list:
+            if p['meas_time'] != date_str:
+                continue
+            chamber = str(p.get('chamber_id', '')).strip()
+            if not chamber:
+                continue
+            ids = [int(x.strip()) for x in chamber.split(',') if x.strip()]
+            ctype = 'fish' if p['rmr_type'] == 'fish' else 'blank'
+            if p['rmr_type'] == 'fish' and (not ids or ids == list(range(2, 10))):
+                ctype = 'fish'
+            elif p['rmr_type'] == 'blank':
+                ctype = 'blank'
+            # 判断是否是特殊 (单个仓且不是 1)
+            if p['rmr_type'] == 'fish' and len(ids) == 1 and ids[0] != 1:
+                ctype = 'special'
+            for cid in ids:
+                if 1 <= cid <= 20:
+                    self._channel_types[cid] = ctype
 
     def _build_right_panel(self, parent):
         """右侧：顶部导航 + 数据游标 + 双标签图 + 斜率结果"""
@@ -400,7 +764,18 @@ class OxyViewer(QtWidgets.QMainWindow):
         if path:
             self._data_dir_edit.setText(path)
             self._settings.setValue('data_dir', path)
+            # 自动提取日期 (前 8 位数字)
+            m = re.match(r'(\d{8})', os.path.basename(path))
+            if m:
+                self._date_edit.setText(m.group(1))
             self._try_auto_match_params()
+
+    def _open_data_dir(self):
+        path = self._data_dir_edit.text().strip()
+        if path and os.path.isdir(path):
+            os.startfile(path)
+        else:
+            QtWidgets.QMessageBox.warning(self, '提示', '文件夹不存在或为空。')
 
     def _browse_params(self):
         start = self._params_file_edit.text() or self._settings.value('params_file', '')
@@ -412,12 +787,16 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._settings.setValue('params_file', path)
             self._load_params_file(path)
 
-    def _on_channel_change(self):
-        if self._data:
-            self._on_load()
-
-    def _on_type_change(self):
-        self._try_auto_match_params()
+    def _open_params_folder(self):
+        path = self._params_file_edit.text().strip()
+        if path:
+            folder = os.path.dirname(path)
+            if os.path.isdir(folder):
+                os.startfile(folder)
+            else:
+                QtWidgets.QMessageBox.warning(self, '提示', '文件夹不存在。')
+        else:
+            QtWidgets.QMessageBox.warning(self, '提示', '请先选择参数文件。')
 
     def _on_params_changed(self):
         if self._data is None:
@@ -425,24 +804,33 @@ class OxyViewer(QtWidgets.QMainWindow):
         try:
             new_vals = (
                 int(self._p_cycles.text()),
+                int(self._p_initial.text()),
                 int(self._p_cycle_length.text()),
                 int(self._p_cycle_start.text()),
                 int(self._p_cycle_time.text()),
+                int(self._p_flush_time.text()),
+                int(self._p_all_time.text()),
             )
         except (ValueError, TypeError):
             return
 
-        # 值未变化则跳过 (避免失去焦点时误触发)
+        # 值未变化则跳过
         if self._params:
-            old_vals = (self._params['cycles'], self._params['cycle_length'],
-                        self._params['cycle_start'], self._params['cycle_time'])
+            old_vals = (self._params['cycles'], self._params.get('initial', 0),
+                        self._params['cycle_length'], self._params['cycle_start'],
+                        self._params['cycle_time'], self._params.get('flush_time', 0),
+                        self._params.get('all_time', 0))
             if new_vals == old_vals:
                 return
 
         self._params['cycles'] = new_vals[0]
-        self._params['cycle_length'] = new_vals[1]
-        self._params['cycle_start'] = new_vals[2]
-        self._params['cycle_time'] = new_vals[3]
+        self._params['initial'] = new_vals[1]
+        self._params['cycle_length'] = new_vals[2]
+        self._params['cycle_start'] = new_vals[3]
+        self._params['cycle_time'] = new_vals[4]
+        self._params['flush_time'] = new_vals[5]
+        self._params['all_time'] = new_vals[6]
+        self._recalc_derived_params()
         self._cycle_bounds = compute_cycle_boundaries(
             self._data['time_seconds'], self._params)
         n = len(self._cycle_bounds)
@@ -459,12 +847,17 @@ class OxyViewer(QtWidgets.QMainWindow):
         if not folder:
             QtWidgets.QMessageBox.critical(self, '错误', '请先选择数据文件夹')
             return
-        channel = self._ch_combo.currentText().strip()
+        channel = self._active_channel
         filepath = os.path.join(folder, f'{channel}.xlsx')
         if not os.path.isfile(filepath):
             QtWidgets.QMessageBox.critical(
-                self, '错误', f'文件不存在:\n{filepath}')
+                self, '错误', f'文件不存在:\\n{filepath}')
             return
+
+        # 自动提取日期
+        m = re.match(r'(\d{8})', os.path.basename(folder))
+        if m and not self._date_edit.text().strip():
+            self._date_edit.setText(m.group(1))
 
         self._progress.setVisible(True)
         QtWidgets.QApplication.processEvents()
@@ -473,14 +866,23 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._data = load_xlsx(filepath)
         except Exception as e:
             QtWidgets.QMessageBox.critical(
-                self, '错误', f'读取 xlsx 失败:\n{e}')
+                self, '错误', f'读取 xlsx 失败:\\n{e}')
             return
         finally:
             self._progress.setVisible(False)
 
+        # 更新通道可用性 (基于文件是否存在，但不改范围)
+        existing = self._detect_channels(folder)
+        ch_from = int(self._ch_from.text() or 1)
+        ch_to = int(self._ch_to.text() or 9)
+        for ch in range(max(1, ch_from - 1), max(ch_to + 2, 12)):
+            self._channel_enabled[ch] = ch in existing
+
         params_path = self._params_file_edit.text().strip()
         if params_path and os.path.isfile(params_path):
             self._load_params_file(params_path)
+        self._load_channel_types_from_params()
+        self._rebuild_channel_rows(ch_from, ch_to)
         self._try_auto_match_params()
 
         if self._params:
@@ -510,9 +912,33 @@ class OxyViewer(QtWidgets.QMainWindow):
             if not self._params_list:
                 return
 
-        folder = self._data_dir_edit.text().strip()
-        meas_type = 'fish' if self._rb_fish.isChecked() else 'blank'
-        matched = match_params(self._params_list, folder, meas_type)
+        date_str = self._date_edit.text().strip()
+        if not date_str:
+            m = re.match(r'(\d{8})', os.path.basename(
+                self._data_dir_edit.text().strip()))
+            if m:
+                date_str = m.group(1)
+                self._date_edit.setText(date_str)
+        ch = self._active_channel
+        meas_type = self._channel_types.get(ch, 'fish')
+        if meas_type == 'special':
+            meas_type = 'fish'  # special 行在 CSV 中 rmr_type 仍是 fish
+
+        # 优先匹配包含当前通道的 chamber_ID
+        matched = None
+        for p in self._params_list:
+            if p['meas_time'] != date_str or p['rmr_type'] != meas_type:
+                continue
+            cids = [int(x) for x in p.get('chamber_id', '').split(',') if x.strip()]
+            if ch in cids:
+                matched = p
+                break
+        # 回退到第一个日期+类型匹配的行
+        if matched is None:
+            for p in self._params_list:
+                if p['meas_time'] == date_str and p['rmr_type'] == meas_type:
+                    matched = p
+                    break
         if matched:
             self._params = matched
             self._fill_param_entries(matched)
@@ -529,9 +955,29 @@ class OxyViewer(QtWidgets.QMainWindow):
 
     def _fill_param_entries(self, params):
         self._p_cycles.setText(str(params['cycles']))
+        self._p_initial.setText(str(params.get('initial', 0)))
         self._p_cycle_length.setText(str(params['cycle_length']))
         self._p_cycle_start.setText(str(params['cycle_start']))
         self._p_cycle_time.setText(str(params['cycle_time']))
+        self._p_flush_time.setText(str(params.get('flush_time', 0)))
+        self._p_all_time.setText(str(params.get('all_time', 0)))
+        self._recalc_derived_params()
+
+    def _recalc_derived_params(self):
+        """根据 cycle_time + flush_time + all_time 自动计算 cycle_length 和 cycles。"""
+        try:
+            ct = int(self._p_cycle_time.text() or '0')
+            ft = int(self._p_flush_time.text() or '0')
+            at = int(self._p_all_time.text() or '0')
+        except ValueError:
+            return
+        cl = ct + ft
+        cy = int((at + ft) / cl) if cl > 0 else 0
+        self._p_cycle_length.setText(str(cl))
+        self._p_cycles.setText(str(cy))
+        if self._params:
+            self._params['cycle_length'] = cl
+            self._params['cycles'] = cy
 
     def _save_params_to_csv(self):
         """将当前循环参数保存回 meas_params.csv。"""
@@ -553,33 +999,43 @@ class OxyViewer(QtWidgets.QMainWindow):
             for row in reader:
                 rows.append(row)
 
-        # 找到匹配行并更新
-        folder = self._data_dir_edit.text().strip()
-        meas_type = 'fish' if self._rb_fish.isChecked() else 'blank'
-        m = re.match(r'(\d{8})', os.path.basename(folder))
-        if not m:
-            QtWidgets.QMessageBox.warning(self, '提示', '无法从文件夹名提取日期。')
+        # 找到匹配行并更新 — 按日期 + 类型 + 通道匹配
+        date_str = self._date_edit.text().strip()
+        if not date_str:
+            QtWidgets.QMessageBox.warning(self, '提示', '数据日期不能为空。')
             return
-        date_str = m.group(1)
+        ch = self._active_channel
+        ch_type = self._channel_types.get(ch, 'fish')
+        # special 通道的 rmr_type 仍然是 fish
+        csv_rmr = 'fish' if ch_type in ('fish', 'special') else 'blank'
 
         updated = False
         for row in rows[1:]:
             if len(row) < 12:
                 continue
-            if row[0].strip() == date_str and row[2].strip() == meas_type:
-                try:
-                    row[5] = self._p_cycles.text()
-                    row[7] = self._p_cycle_length.text()
-                    row[8] = self._p_cycle_start.text()
-                    row[9] = self._p_cycle_time.text()
-                    updated = True
-                except IndexError:
-                    pass
-                break
+            if row[0].strip() != date_str or row[2].strip() != csv_rmr:
+                continue
+            # 匹配 chamber_ID: CSV 中存的是逗号分隔的通道号列表（如 "2,3,4"）或单个数字
+            row_ch = row[3].strip().replace('"', '')
+            row_chs = set(int(x.strip()) for x in row_ch.split(',') if x.strip())
+            if ch not in row_chs:
+                continue
+            try:
+                row[6] = self._p_cycles.text()
+                row[7] = self._p_initial.text()
+                row[8] = self._p_cycle_length.text()
+                row[9] = self._p_cycle_start.text()
+                row[10] = self._p_cycle_time.text()
+                row[11] = self._p_flush_time.text()
+                row[12] = self._p_all_time.text()
+                updated = True
+            except IndexError:
+                pass
+            break
 
         if not updated:
             QtWidgets.QMessageBox.warning(self, '提示',
-                f'在参数文件中未找到 {date_str} / {meas_type} 的匹配行。')
+                f'在参数文件中未找到 {date_str} / ch{ch} / {csv_rmr} 的匹配行。')
             return
 
         # 写回
@@ -588,9 +1044,12 @@ class OxyViewer(QtWidgets.QMainWindow):
             writer.writerows(rows)
 
         self._params['cycles'] = int(self._p_cycles.text())
+        self._params['initial'] = int(self._p_initial.text())
         self._params['cycle_length'] = int(self._p_cycle_length.text())
         self._params['cycle_start'] = int(self._p_cycle_start.text())
         self._params['cycle_time'] = int(self._p_cycle_time.text())
+        self._params['flush_time'] = int(self._p_flush_time.text())
+        self._params['all_time'] = int(self._p_all_time.text())
 
         self._params_status.setText('参数已保存！')
         QtWidgets.QMessageBox.information(self, '成功', '循环参数已保存到文件。')
@@ -607,7 +1066,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         return 's'
 
     def _redraw(self):
-        if self._data is None or not self._cycle_bounds:
+        if self._data is None:
             return
 
         unit = self._time_unit()
@@ -639,7 +1098,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
     def _update_slope_info(self):
         if self._data is None or not self._cycle_bounds:
-            self._slope_label.setText('')
+            self._slope_label.setText('参数为空，请填写循环参数')
             return
         idx = self._current_cycle - 1
         if idx < 0 or idx >= len(self._cycle_bounds):
