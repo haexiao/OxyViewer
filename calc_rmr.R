@@ -55,19 +55,10 @@ params <- read.csv(params_file, fileEncoding = "UTF-8-BOM")
 # ── 为每个通道匹配参数并计算 ──
 for (x in channel) {
 
-  # 确定 rmr_type
-  if (x == 1) {
-    rmr_type <- "blank"
-  } else {
-    rmr_type <- "fish"
-  }
-
-  # 从 chamber_ID 匹配参数行
+  # 从 chamber_ID 匹配参数行 (不再硬编码 rmr_type)
   mode_params <- NULL
   for (i in seq_len(nrow(params))) {
     if (params$meas_time[i] != meas_time) next
-    if (params$rmr_type[i] != rmr_type) next
-    # 检查 chamber_ID 是否包含此通道
     cid <- as.character(params$chamber_ID[i])
     ids <- as.integer(unlist(strsplit(gsub("\"", "", cid), ",")))
     if (x %in% ids) {
@@ -81,6 +72,7 @@ for (x in channel) {
     next
   }
 
+  # 从匹配行读取参数
   cycles       <- params$cycles[mode_params]
   cycle_length <- params$cycle_length[mode_params]
   initial      <- params$initial[mode_params]
@@ -95,12 +87,13 @@ for (x in channel) {
   # 循环时间矩阵
   cycle_mat <- matrix(data = NA, nrow = cycles, ncol = 2)
   colnames(cycle_mat) <- c("start", "end")
-  cycle_mat[, "start"] <- seq(from = cycle_start + initial, by = cycle_length, length.out = cycles)
+  cycle_mat[, "start"] <- seq(from = cycle_start + initial,
+                              by = cycle_length, length.out = cycles)
   cycle_mat[, "end"]   <- cycle_mat[, "start"] + cycle_time
 
   # ── 读取数据 ──
   infile  <- file.path(data_folder, paste0(x, ".xlsx"))
-  outfile <- file.path(paste0("rmr", x, ".csv"))  # 写入当前工作目录（即导出文件夹）
+  outfile <- file.path(paste0("rmr", x, ".csv"))
 
   if (!file.exists(infile)) {
     message("文件不存在: ", infile, "，跳过")
@@ -124,11 +117,13 @@ for (x in channel) {
 
   # ── 计算耗氧率 ──
   dataint <- inspect(data, time = 3, oxygen = 4)
-  rates <- calc_rate(dataint, from = cycle_mat[, "start"], to = cycle_mat[, "end"], by = "time")
+  rates <- calc_rate(dataint, from = cycle_mat[, "start"],
+                     to = cycle_mat[, "end"], by = "time")
   s <- rates$summary[, 2:13]
   s$rate <- s$rate * 3600  # 转换为 mgO2·L⁻¹·h⁻¹
 
   # ── 导出 ──
-  write.table(x = s, file = outfile, sep = ",", row.names = FALSE, col.names = TRUE)
+  write.table(x = s, file = outfile, sep = ",", row.names = FALSE,
+              col.names = TRUE)
   message("已保存: ", outfile)
 }
