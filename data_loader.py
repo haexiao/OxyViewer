@@ -1,6 +1,4 @@
 """数据读取与参数解析"""
-import os
-import re
 import csv
 import bisect
 from openpyxl import load_workbook
@@ -81,28 +79,6 @@ def load_params(csv_path):
             }
             params_list.append(p)
     return params_list
-
-
-def match_params(params_list, folder_name, meas_type):
-    """根据文件夹名称中的日期和 fish/blank 类型匹配循环参数。
-
-    Args:
-        params_list: load_params 的返回值
-        folder_name: 例如 "20260422 20" 或 "I:\\R软件\\20260422\\20260422 20"
-        meas_type: "fish" 或 "blank"
-
-    Returns:
-        dict or None
-    """
-    m = re.match(r'(\d{8})', os.path.basename(folder_name))
-    if not m:
-        return None
-    date_str = m.group(1)
-
-    for p in params_list:
-        if p['meas_time'] == date_str and p['rmr_type'] == meas_type:
-            return p
-    return None
 
 
 def compute_cycle_boundaries(time_seconds, params):

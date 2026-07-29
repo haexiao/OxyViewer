@@ -26,3 +26,10 @@ dist/
 
 # Config with local paths
 .env
+
+# R virtual environment
+renv/library/
+renv/python/
+renv/staging/
+renv/sandbox/
+renv/cellar/

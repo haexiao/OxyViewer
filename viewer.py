@@ -5,9 +5,9 @@ import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets, QtGui
 
-from data_loader import load_xlsx, load_params, match_params, compute_cycle_boundaries
+from data_loader import load_xlsx, load_params, compute_cycle_boundaries
 from cycle_analyzer import compute_slope
-from plots import render_global, render_local, find_nearest
+from plots import GlobalRenderer, LocalRenderer, find_nearest
 
 # ── 默认路径 (首次启动为空，之后通过 QSettings 记忆) ──
 DEFAULT_DATA_DIR = ''
@@ -66,14 +66,19 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._build_left_panel(splitter)
         self._build_right_panel(splitter)
 
-        splitter.setSizes([280, 1000])
+        splitter.setSizes([290, 1000])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
+
+        # 设置应用图标
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logo.png')
+        if os.path.isfile(logo_path):
+            self.setWindowIcon(QtGui.QIcon(logo_path))
 
     def _build_left_panel(self, parent):
         """左侧控制面板 — 新布局：数据文件夹/参数文件/加载数据/数据日期/通道设置/循环参数/图像设置"""
         panel = QtWidgets.QWidget()
-        panel.setFixedWidth(270)
+        # 宽度由 QSplitter 控制
 
         # 顶层用 QScrollArea 防止窗口缩小时挤压
         scroll = QtWidgets.QScrollArea()
@@ -224,6 +229,83 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._progress.setVisible(False)
         self._progress.setFixedHeight(6)
         vbox.addWidget(self._progress)
+
+        _sep()
+
+        # ════════════════════════════════════════════════
+        # 数据计算 (可折叠)
+        # ════════════════════════════════════════════════
+        _rmr_container, _rmr_cl = _fold_section('数据计算')
+
+        # 导出文件名
+        row_fn = QtWidgets.QHBoxLayout()
+        row_fn.addWidget(QtWidgets.QLabel('导出文件名'))
+        self._rmr_fname = QtWidgets.QLineEdit('rmr')
+        self._rmr_fname.setFixedWidth(50)
+        row_fn.addWidget(self._rmr_fname)
+        row_fn.addWidget(QtWidgets.QLabel('.csv'))
+        row_fn.addStretch()
+        _rmr_cl.addLayout(row_fn)
+        lbl = QtWidgets.QLabel('格式: rmr{通道号}.csv (如 rmr1.csv)')
+        lbl.setStyleSheet('font-size: 8pt; color: #888; padding-left: 2px;')
+        _rmr_cl.addWidget(lbl)
+
+        # 导出文件夹
+        row_fd = QtWidgets.QHBoxLayout()
+        row_fd.addWidget(QtWidgets.QLabel('导出到'))
+        self._rmr_folder_combo = QtWidgets.QComboBox()
+        self._rmr_folder_combo.addItems(['数据文件夹', '自定义'])
+        self._rmr_folder_combo.currentIndexChanged.connect(self._rmr_on_folder_change)
+        row_fd.addWidget(self._rmr_folder_combo)
+        _rmr_cl.addLayout(row_fd)
+
+        # 数据文件夹路径 (只读)
+        self._rmr_data_dir = QtWidgets.QLineEdit()
+        self._rmr_data_dir.setReadOnly(True)
+        self._rmr_data_dir.setStyleSheet('background: #f0f0f0;')
+        _rmr_cl.addWidget(self._rmr_data_dir)
+
+        # 自定义文件夹行
+        rmr_custom = QtWidgets.QWidget()
+        self._rmr_custom_widget = rmr_custom
+        rmr_custom.setVisible(False)
+        rmr_layout = QtWidgets.QHBoxLayout(rmr_custom)
+        rmr_layout.setContentsMargins(0, 0, 0, 0)
+        self._rmr_custom_edit = QtWidgets.QLineEdit()
+        self._rmr_custom_edit.setPlaceholderText('选择自定义文件夹...')
+        rmr_layout.addWidget(self._rmr_custom_edit)
+        btn_browse = QtWidgets.QPushButton('浏览')
+        btn_browse.setFixedWidth(48)
+        btn_browse.clicked.connect(self._browse_rmr_dir)
+        rmr_layout.addWidget(btn_browse)
+        btn_open = QtWidgets.QPushButton('打开')
+        btn_open.setFixedWidth(48)
+        btn_open.clicked.connect(self._open_rmr_dir)
+        rmr_layout.addWidget(btn_open)
+        _rmr_cl.addWidget(rmr_custom)
+
+        # 按钮
+        row_btn = QtWidgets.QHBoxLayout()
+        btn_cur = QtWidgets.QPushButton('计算当前通道')
+        btn_cur.clicked.connect(self._rmr_calc_current)
+        row_btn.addWidget(btn_cur)
+        btn_all = QtWidgets.QPushButton('计算所有通道')
+        btn_all.clicked.connect(self._rmr_calc_all)
+        row_btn.addWidget(btn_all)
+        _rmr_cl.addLayout(row_btn)
+
+        # 进度条
+        self._rmr_progress = QtWidgets.QProgressBar()
+        self._rmr_progress.setRange(0, 0)
+        self._rmr_progress.setTextVisible(False)
+        self._rmr_progress.setVisible(False)
+        self._rmr_progress.setFixedHeight(4)
+        _rmr_cl.addWidget(self._rmr_progress)
+
+        # 状态
+        self._rmr_status = QtWidgets.QLabel('')
+        self._rmr_status.setStyleSheet('font-size: 8pt; color: #4caf50; padding-left: 2px;')
+        _rmr_cl.addWidget(self._rmr_status)
 
         _sep()
 
@@ -540,12 +622,10 @@ class OxyViewer(QtWidgets.QMainWindow):
             return
 
         import csv
-        rows = []
         with open(csv_path, 'r', encoding='utf-8-sig') as f:
-            reader = csv.reader(f)
-            rows.append(next(reader))  # header
-            for row in reader:
-                rows.append(row)
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
+            rows = [dict(r) for r in reader]
 
         # ── 当前通道分类 ──
         fish_chs   = [c for c in sorted(self._channel_types)
@@ -556,22 +636,20 @@ class OxyViewer(QtWidgets.QMainWindow):
                        if self._channel_types[c] == 'special' and self._channel_enabled.get(c, True)]
 
         # ── 查找/分类该日期的行 ──
-        fish_general_row = None   # 通用鱼行 (chamber_ID 含逗号 或 空)
+        fish_general_row = None
         fish_general_idx = None
         blank_row = None
         blank_idx = None
-        special_rows = []         # [(idx, row, chamber_id_str)]
+        special_rows = []   # [(idx, row, chamber_id_str)]
 
-        for i, row in enumerate(rows[1:], 1):
-            if len(row) < 4:
+        for i, row in enumerate(rows):
+            if row.get('meas_time', '').strip() != date_str:
                 continue
-            if row[0].strip() != date_str:
-                continue
-            rmr = row[2].strip()
-            chamber_str = row[3].strip().replace('"', '')
+            rmr = row.get('rmr_type', '').strip()
+            chamber_str = row.get('chamber_ID', '').strip().replace('"', '')
             ch_ids = [x.strip() for x in chamber_str.split(',') if x.strip()]
 
-            if rmr == 'fish' and (',' in row[3] or not chamber_str or len(ch_ids) > 1):
+            if rmr == 'fish' and (',' in row.get('chamber_ID', '') or not chamber_str or len(ch_ids) > 1):
                 fish_general_row = row
                 fish_general_idx = i
             elif rmr == 'fish' and len(ch_ids) == 1:
@@ -581,21 +659,15 @@ class OxyViewer(QtWidgets.QMainWindow):
                 blank_idx = i
 
         # ── 处理特殊通道 (新建 / 删除) ──
-        # 1. 找出 CSV 中原有的特殊通道
-        csv_special_chs = {int(s[2]): s for s in special_rows}  # {ch: (idx, row, chamber_str)}
-        # 2. 新特殊: 当前有但 CSV 中没有 → 新建行
+        csv_special_chs = {int(s[2]): s for s in special_rows}
         new_special = [c for c in special_chs if c not in csv_special_chs]
-        # 3. 已移除: CSV 有但当前没有 → 删除行, 加回 fish
         removed_special = [c for c in csv_special_chs if c not in special_chs]
 
-        # ── 执行保存 ──
         # 反向删除 (避免索引变化)
         for ch in sorted(csv_special_chs.keys(), reverse=True):
             if ch in removed_special:
-                # 删除特殊行
                 idx, row, _ = csv_special_chs[ch]
                 del rows[idx]
-                # 调整后续索引
                 for sp in special_rows:
                     if sp[0] > idx:
                         sp = (sp[0] - 1, sp[1], sp[2])
@@ -603,40 +675,34 @@ class OxyViewer(QtWidgets.QMainWindow):
                     blank_idx -= 1
                 if fish_general_idx and fish_general_idx > idx:
                     fish_general_idx -= 1
-                # 加回到 fish 列表
                 if ch not in fish_chs:
                     fish_chs.append(ch)
-                print(f'[save] removed special ch{ch}, added to fish')
 
-        # 新建特殊行——复制通用鱼行参数
+        # 新建特殊行
         for ch in new_special:
             if fish_general_row is None:
                 QtWidgets.QMessageBox.warning(self, '提示',
                     f'无法创建特殊通道 ch{ch}：该日期无通用鱼行可作为模板。')
                 continue
-            new_row = list(fish_general_row)  # 复制所有参数
-            new_row[3] = str(ch)               # chamber_ID = 单通道号
-            # 插入到通用鱼行之后
-            insert_at = fish_general_idx + 1 if fish_general_idx else 1
+            new_row = dict(fish_general_row)
+            new_row['chamber_ID'] = str(ch)
+            insert_at = fish_general_idx + 1 if fish_general_idx is not None else 1
             rows.insert(insert_at, new_row)
-            # 调整索引
-            if blank_idx and blank_idx >= insert_at:
+            if blank_idx is not None and blank_idx >= insert_at:
                 blank_idx += 1
-            print(f'[save] created special ch{ch} from fish_general row')
 
-        # 重新排序 fish_chs (可能加入了 removed_special)
         fish_chs = sorted(set(fish_chs))
         blank_chs = sorted(set(blank_chs))
 
-        # ── 更新 chamber_ID ──
         if fish_general_row:
-            fish_general_row[3] = ','.join(str(c) for c in fish_chs) if fish_chs else ''
+            fish_general_row['chamber_ID'] = ','.join(str(c) for c in fish_chs) if fish_chs else ''
         if blank_row:
-            blank_row[3] = ','.join(str(c) for c in blank_chs) if blank_chs else ''
+            blank_row['chamber_ID'] = ','.join(str(c) for c in blank_chs) if blank_chs else ''
 
-        # ── 写回 ──
         with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
-            csv.writer(f).writerows(rows)
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
 
         self._params_status.setText('通道设置已保存！')
         QtWidgets.QMessageBox.information(self, '成功', '通道设置已保存到参数文件。')
@@ -739,6 +805,7 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._pw_global.scene().sigMouseMoved, rateLimit=30,
             slot=lambda e: self._on_cursor(e, self._pw_global))
         self._tabs.addTab(self._pw_global, '全局预览')
+        self._global_renderer = GlobalRenderer(self._pw_global)
 
         # Tab 2: 局部预览
         self._pw_local = pg.PlotWidget()
@@ -748,6 +815,7 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._pw_local.scene().sigMouseMoved, rateLimit=30,
             slot=lambda e: self._on_cursor(e, self._pw_local))
         self._tabs.addTab(self._pw_local, '局部预览')
+        self._local_renderer = LocalRenderer(self._pw_local)
 
         vbox.addWidget(self._tabs, stretch=1)
 
@@ -839,8 +907,59 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._redraw()
 
     def _on_display_change(self):
-        if self._data:
-            self._redraw()
+        if self._data is None:
+            return
+        sender = self.sender()
+        # 属性级更新 (不重建全部)
+        if sender is self._cb_temp:
+            show = self._cb_temp.isChecked()
+            self._global_renderer.toggle_temp(show)
+            self._local_renderer.toggle_temp(show)
+            return
+        if sender is self._cb_press:
+            show = self._cb_press.isChecked()
+            self._global_renderer.toggle_press(show)
+            self._local_renderer.toggle_press(show)
+            return
+        if sender is self._cb_points:
+            show = self._cb_points.isChecked()
+            self._global_renderer.toggle_points(show)
+            self._local_renderer.toggle_points(show)
+            return
+        if sender is self._cb_lines:
+            show = self._cb_lines.isChecked()
+            self._global_renderer.toggle_lines(show)
+            self._local_renderer.toggle_lines(show)
+            return
+        if sender is self._cb_trend:
+            show = self._cb_trend.isChecked()
+            self._local_renderer.toggle_trend(show)
+            return
+        if sender is self._cb_slope_region:
+            show = self._cb_slope_region.isChecked()
+            self._global_renderer.toggle_slope_region(show)
+            self._local_renderer.toggle_slope_region(show)
+            return
+        if sender is self._combo_pt_size:
+            self._global_renderer.set_point_size(float(self._combo_pt_size.currentText()))
+            self._local_renderer.set_point_size(float(self._combo_pt_size.currentText()))
+            return
+        if sender is self._combo_ln_width:
+            self._global_renderer.set_line_width(float(self._combo_ln_width.currentText()))
+            self._local_renderer.set_line_width(float(self._combo_ln_width.currentText()))
+            return
+        if sender is self._combo_trend_width:
+            self._local_renderer.set_trend_width(float(self._combo_trend_width.currentText()))
+            return
+        # 时间格式切换: 无需全量重建
+        if sender in (self._rb_s, self._rb_m, self._rb_h):
+            if self._rb_s.isChecked(): unit = 's'
+            elif self._rb_m.isChecked(): unit = 'm'
+            else: unit = 'h'
+            self._global_renderer.set_time_unit(unit)
+            self._local_renderer.set_time_unit(unit)
+            return
+        self._redraw()
 
     def _on_load(self):
         folder = self._data_dir_edit.text().strip()
@@ -895,6 +1014,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._update_nav()
         self._redraw()
         self._update_slope_info()
+        self._rmr_data_dir.setText(folder)
 
     def _load_params_file(self, path):
         try:
@@ -989,48 +1109,38 @@ class OxyViewer(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, '提示', '参数文件路径无效。')
             return
 
-        # 读取所有行
         import csv
-        rows = []
         with open(csv_path, 'r', encoding='utf-8-sig') as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            rows.append(header)
-            for row in reader:
-                rows.append(row)
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
+            rows = [dict(r) for r in reader]
 
-        # 找到匹配行并更新 — 按日期 + 类型 + 通道匹配
         date_str = self._date_edit.text().strip()
         if not date_str:
             QtWidgets.QMessageBox.warning(self, '提示', '数据日期不能为空。')
             return
         ch = self._active_channel
         ch_type = self._channel_types.get(ch, 'fish')
-        # special 通道的 rmr_type 仍然是 fish
         csv_rmr = 'fish' if ch_type in ('fish', 'special') else 'blank'
 
         updated = False
-        for row in rows[1:]:
-            if len(row) < 12:
+        for row in rows:
+            if row.get('meas_time', '').strip() != date_str:
                 continue
-            if row[0].strip() != date_str or row[2].strip() != csv_rmr:
+            if row.get('rmr_type', '').strip() != csv_rmr:
                 continue
-            # 匹配 chamber_ID: CSV 中存的是逗号分隔的通道号列表（如 "2,3,4"）或单个数字
-            row_ch = row[3].strip().replace('"', '')
+            row_ch = row.get('chamber_ID', '').strip().replace('"', '')
             row_chs = set(int(x.strip()) for x in row_ch.split(',') if x.strip())
             if ch not in row_chs:
                 continue
-            try:
-                row[6] = self._p_cycles.text()
-                row[7] = self._p_initial.text()
-                row[8] = self._p_cycle_length.text()
-                row[9] = self._p_cycle_start.text()
-                row[10] = self._p_cycle_time.text()
-                row[11] = self._p_flush_time.text()
-                row[12] = self._p_all_time.text()
-                updated = True
-            except IndexError:
-                pass
+            row['cycles'] = self._p_cycles.text()
+            row['initial'] = self._p_initial.text()
+            row['cycle_length'] = self._p_cycle_length.text()
+            row['cycle_start'] = self._p_cycle_start.text()
+            row['cycle_time'] = self._p_cycle_time.text()
+            row['flush_time'] = self._p_flush_time.text()
+            row['all_time'] = self._p_all_time.text()
+            updated = True
             break
 
         if not updated:
@@ -1038,9 +1148,9 @@ class OxyViewer(QtWidgets.QMainWindow):
                 f'在参数文件中未找到 {date_str} / ch{ch} / {csv_rmr} 的匹配行。')
             return
 
-        # 写回
         with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
-            writer = csv.writer(f)
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
             writer.writerows(rows)
 
         self._params['cycles'] = int(self._p_cycles.text())
@@ -1080,19 +1190,19 @@ class OxyViewer(QtWidgets.QMainWindow):
         trend_w = float(self._combo_trend_width.currentText())
         show_slope = self._cb_slope_region.isChecked()
 
-        render_global(self._pw_global, self._data, self._cycle_bounds,
-                      self._current_cycle, show_temp, show_press, unit,
-                      show_points=show_points, show_lines=show_lines,
-                      point_size=pt_size, line_width=ln_width,
-                      show_slope_region=show_slope)
+        self._global_renderer.full_render(self._data, self._cycle_bounds,
+                          self._current_cycle, show_temp, show_press, unit,
+                          show_points=show_points, show_lines=show_lines,
+                          point_size=pt_size, line_width=ln_width,
+                          show_slope_region=show_slope)
 
         idx = self._current_cycle - 1
-        render_local(self._pw_local, self._data, self._cycle_bounds,
-                     idx, show_temp, show_press, unit,
-                     show_points=show_points, show_lines=show_lines,
-                     point_size=pt_size, line_width=ln_width,
-                     show_trend=show_trend, trend_width=trend_w,
-                     show_slope_region=show_slope)
+        self._local_renderer.full_render(self._data, self._cycle_bounds,
+                         idx, show_temp, show_press, unit,
+                         show_points=show_points, show_lines=show_lines,
+                         point_size=pt_size, line_width=ln_width,
+                         show_trend=show_trend, trend_width=trend_w,
+                         show_slope_region=show_slope)
 
         self._update_slope_info()
 
@@ -1133,6 +1243,33 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._cycle_slider.setValue(self._current_cycle)
         self._cycle_label.setText(f'{self._current_cycle} / {n}')
 
+    def _redraw_cycle(self):
+        """快速切换循环：只更新高亮 + 局部视图。"""
+        if self._data is None or not self._cycle_bounds:
+            return
+        idx = self._current_cycle - 1
+        if idx < 0 or idx >= len(self._cycle_bounds):
+            return
+        unit = self._time_unit()
+        show_temp = self._cb_temp.isChecked()
+        show_press = self._cb_press.isChecked()
+        show_points = self._cb_points.isChecked()
+        show_lines = self._cb_lines.isChecked()
+        pt_size = float(self._combo_pt_size.currentText())
+        ln_width = float(self._combo_ln_width.currentText())
+        show_trend = self._cb_trend.isChecked()
+        trend_w = float(self._combo_trend_width.currentText())
+        show_slope = self._cb_slope_region.isChecked()
+
+        self._global_renderer.switch_cycle(self._current_cycle)
+        self._local_renderer.full_render(self._data, self._cycle_bounds,
+                         idx, show_temp, show_press, unit,
+                         show_points=show_points, show_lines=show_lines,
+                         point_size=pt_size, line_width=ln_width,
+                         show_trend=show_trend, trend_width=trend_w,
+                         show_slope_region=show_slope)
+        self._update_slope_info()
+
     def _cycle_step(self, delta):
         if not self._cycle_bounds:
             return
@@ -1142,14 +1279,14 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._current_cycle = new_val
             self._cycle_slider.setValue(new_val)
             self._cycle_label.setText(f'{self._current_cycle} / {n}')
-            self._redraw()
+            self._redraw_cycle()
 
     def _on_slider_move(self, val):
         if self._cycle_bounds and 1 <= val <= len(self._cycle_bounds):
             self._current_cycle = val
             self._cycle_label.setText(
                 f'{self._current_cycle} / {len(self._cycle_bounds)}')
-            self._redraw()
+            self._redraw_cycle()
 
     # ════════════════════════════════════════════════════
     #  数据游标
@@ -1185,6 +1322,103 @@ class OxyViewer(QtWidgets.QMainWindow):
             f'O₂: {oxy:.3f} mg/L  |  '
             f'Temp: {tmp:.2f} °C  |  '
             f'Press: {prs:.0f} hPa')
+
+    # ════════════════════════════════════════════════════
+    #  RMR 数据计算
+    # ════════════════════════════════════════════════════
+
+    def _rmr_on_folder_change(self, idx):
+        self._rmr_data_dir.setVisible(idx == 0)
+        self._rmr_custom_widget.setVisible(idx == 1)
+
+    def _rmr_get_export_folder(self):
+        if self._rmr_folder_combo.currentIndex() == 0:
+            return self._rmr_data_dir.text() or self._data_dir_edit.text()
+        return self._rmr_custom_edit.text()
+
+    def _browse_rmr_dir(self):
+        path = QtWidgets.QFileDialog.getExistingDirectory(self, '选择导出文件夹')
+        if path:
+            self._rmr_custom_edit.setText(path)
+
+    def _open_rmr_dir(self):
+        folder = self._rmr_get_export_folder()
+        if folder and os.path.isdir(folder):
+            os.startfile(folder)
+
+    def _rmr_calc_current(self):
+        if hasattr(self, '_active_channel'):
+            self._rmr_calc_channels([self._active_channel],
+                                     f'当前通道 {self._active_channel} 已保存！')
+
+    def _rmr_calc_all(self):
+        channels = [ch for ch, enabled in self._channel_enabled.items()
+                    if enabled and self._channel_types.get(ch) in ('fish', 'blank', 'special')]
+        if not channels:
+            QtWidgets.QMessageBox.warning(self, '提示', '没有可计算的通道（请先加载数据）。')
+            return
+        saved_str = ', '.join(str(c) for c in sorted(channels))
+        self._rmr_calc_channels(channels, f'所有通道 {saved_str} 已保存！')
+
+    def _rmr_calc_channels(self, channels, success_msg=None):
+        if self._data is None:
+            QtWidgets.QMessageBox.warning(self, '提示', '请先加载数据。')
+            return
+        data_folder = self._data_dir_edit.text()
+        params_csv = self._params_file_edit.text() or os.path.join(
+            os.path.dirname(data_folder), 'raw', 'meas_params.csv')
+        export_folder = self._rmr_get_export_folder()
+        if not os.path.isdir(export_folder):
+            QtWidgets.QMessageBox.warning(self, '警告', f'导出文件夹不存在:\n{export_folder}')
+            return
+        r_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calc_rmr.R')
+        date_str = self._date_edit.text() or os.path.basename(data_folder)[:8]
+        ch_str = ','.join(str(c) for c in channels)
+        msg_parts = [
+            '即将调用 R 计算:',
+            f'  数据文件夹: {data_folder}',
+            f'  参数文件:   {params_csv}',
+            f'  实验日期:   {date_str}',
+            f'  通道:       {ch_str}',
+            f'  导出到:     {export_folder}',
+            '', '是否继续？',
+        ]
+        reply = QtWidgets.QMessageBox.question(
+            self, '确认 R 计算', '\n'.join(msg_parts),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        import subprocess
+        self._rmr_progress.setVisible(True)
+        self._rmr_status.setText(f'正在计算通道 {ch_str}...')
+        QtWidgets.QApplication.processEvents()
+        r_libs = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'renv', 'library')
+        env = os.environ.copy()
+        if os.path.isdir(r_libs):
+            env['R_LIBS'] = r_libs
+        try:
+            result = subprocess.run(
+                ['Rscript', r_script, data_folder, params_csv, date_str, ch_str],
+                capture_output=True, text=True, timeout=300,
+                cwd=export_folder, env=env)
+            if result.returncode == 0:
+                self._rmr_progress.setVisible(False)
+                self._rmr_status.setText(success_msg or '计算完成！')
+            else:
+                self._rmr_progress.setVisible(False)
+                self._rmr_status.setText('计算失败，请查看 R 输出。')
+                QtWidgets.QMessageBox.critical(self, 'R 错误',
+                    f'R 脚本返回值 {result.returncode}\n\n{result.stderr[:500]}')
+        except FileNotFoundError:
+            self._rmr_progress.setVisible(False)
+            self._rmr_status.setText('Rscript 未找到，请确认已安装 R。')
+        except subprocess.TimeoutExpired:
+            self._rmr_progress.setVisible(False)
+            self._rmr_status.setText('计算超时。')
+        except Exception as e:
+            self._rmr_progress.setVisible(False)
+            self._rmr_status.setText('计算异常。')
+            QtWidgets.QMessageBox.critical(self, '错误', str(e))
 
 
 # ════════════════════════════════════════════════════════

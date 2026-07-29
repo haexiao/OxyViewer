@@ -1,142 +1,160 @@
-# OxyViewer v1.1.0
+# OxyViewer — 鱼类耗氧率数据可视化分析与计算工具
 
-鱼类耗氧率数据可视化分析工具。读取 PreSens OXY-10 导出的 xlsx 数据，显示溶氧曲线并自动计算线性回归斜率（耗氧率），支持多通道管理、循环参数编辑和结果导出。
+基于 PyQt5 + pyqtgraph 的 PreSens OXY-10 SMA 溶氧数据桌面分析软件。支持多通道管理、循环参数编辑、GPU 加速渲染、耗氧率(RMR)自动计算。
 
-## 安装与运行
+## 快速开始
 
-### 方式一：便携 EXE（推荐）
+### 环境要求
 
-下载 [OxyViewer.exe](https://github.com/haexiao/OxyViewer/releases/latest) 双击运行。首次启动可能被 Windows 拦截，点击「更多信息」→「仍要运行」即可。
+- **Python 3.10+**（必须）
+- **R 4.4+**（可选，仅 RMR 计算需要）
 
-> **EXE 有 Bug？** 如果 EXE 出现图表不显示、崩溃等问题，改用方式二（`run.bat` 脚本启动），功能完全相同且更稳定。
+### 首次使用
 
-### 方式二：`run.bat` 脚本
+**双击 `run.bat`** 即可，首次运行会自动：
+1. 创建 Python 虚拟环境 (`venv/`)
+2. 安装 Python 依赖 (`pyqtgraph`, `numpy`, `openpyxl`)
+3. 检测 R 环境，若存在则自动安装 R 包到 `renv/` 虚拟环境
+
+无 R 环境时，查看、调参、导出功能完全正常，仅「数据计算」按钮不可用。
+
+### 手动 Python 环境
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/haexiao/OxyViewer.git
-cd OxyViewer
-
-# 2. 创建虚拟环境并安装依赖
 python -m venv venv
 venv\Scripts\pip install -r requirements.txt
-
-# 3. 运行
-双击 run.bat    # 或命令行: venv\Scripts\python main.py
+venv\Scripts\python main.py
 ```
 
-## 界面说明
+### R 环境（可选）
 
-界面分为左面板（控制）和右面板（图表）。
-
-### 左面板（从上到下）
-
-#### 1. 数据文件夹
-点击「浏览」选择实验数据文件夹（如 `20260422 20`），点击「打开」可在资源管理器中查看。
-
-#### 2. 参数文件
-点击「浏览」选择 `meas_params.csv`（通常位于 `raw/` 下），点击「打开」可在资源管理器中查看文件所在目录。加载成功后显示绿色提示。
-
-#### 3. 加载数据
-选择数据文件夹和参数文件后，点击蓝色「加载数据」按钮。软件会：
-- 根据文件夹中的 xlsx 文件判断哪些通道可用（勾选框自动打勾/不打勾）
-- 从参数文件加载各通道的类型（Fish / Blank / 特殊）
-- 自动提取文件夹名中的日期（前 8 位数字，如 `20260422`）
-
-#### 4. 数据日期
-显示当前实验日期，自动从文件夹名提取，**可手动修改**（用于匹配参数文件中的日期）。
-
-#### 5. 通道设置（可折叠 ▼）
-
-```
-通道范围：[1] ~ [9]  ← 设置显示多少个通道行
-☑ [1]  ◉ Fish ○ Blank ○特殊  ← 每个通道一行
-...
+```bash
+# 安装 R: https://cran.r-project.org
+# 安装 R 包（首次启动自动完成，也可手动）:
+Rscript -e "install.packages(c('respR','lubridate','readxl'))"
 ```
 
-- **通道按钮**（如 `[1]`）：点击切换右侧图表显示的通道
-- **Fish / Blank / 特殊**：设置通道类型
-  - `Fish`：普通鱼仓（参数文件中 `chamber_ID` 为逗号分隔列表，如 `2,3,4`）
-  - `Blank`：空白仓（参数文件中 `chamber_ID` 为单个数字）
-  - `特殊`：独立参数的鱼仓（参数文件中 `chamber_ID` 为单个数字，拥有独立参数行）
-- **「保存到通道设置」**：将通道类型变更写入参数文件。从 Fish 改为特殊时会自动新建一行复制原参数；从特殊改回 Fish 时自动删除特殊行并合并通道号。
+## 操作指南
 
-#### 6. 循环参数（可折叠 ▼）
+### 1. 选择数据
 
-| 字段 | 说明 | 可编辑 |
-|------|------|:--:|
-| 循环数 | 总循环次数，自动计算 | 只读 |
-| 起始偏移(s) | 数据开始后到第一个循环前的偏移 | ✅ |
-| 周期(s) | 一个完整周期（测量+冲洗），自动计算 | 只读 |
-| 斜率起点(s) | 每个循环内从第几秒开始计算斜率 | ✅ |
-| 测量(s) | 测量阶段持续时长 | ✅ |
-| 冲洗(s) | 冲洗阶段持续时长 | ✅ |
-| 总时长(s) | 实验数据总时长 | ✅ |
+- **数据文件夹**：浏览选择包含 `*.xlsx` 文件的文件夹（如 `20260422 20/`）
+- **参数文件**：选择 `meas_params.csv`（首次自动从数据文件夹上级 `raw/` 目录推测）
+- 点击「加载数据」读取当前通道的 xlsx 文件
 
-**自动计算规则：**
-- `周期 = 测量 + 冲洗`
-- `循环数 = int((总时长 + 冲洗) / 周期)`
+### 2. 通道管理
 
-修改测量/冲洗/总时长后按 Enter，两个只读字段自动更新。
+- **通道范围**：可调 1~N，回车确认
+- 每通道可选类型：`Fish`（实验鱼）/ `Blank`（空白对照）/ `特殊`（独立参数）
+- 点击通道号按钮可切换当前通道并重新加载
+- 「保存到通道设置」将修改写入 CSV
 
-**「保存到循环参数」**：将当前参数按通道号精确写入参数文件对应行（不会串列）。
+### 3. 循环参数
 
-#### 7. 图像设置（可折叠 ▼）
+| 参数 | 说明 |
+|------|------|
+| 循环数 | 只读，由 总时长÷周期 自动计算 |
+| 起始偏移 | 实验开始后跳过的时间 (s) |
+| 周期 | 只读，测量 + 冲洗 |
+| 斜率起点 | 每个周期内开始计算斜率的时间点 (s) |
+| 测量 | 关闭水泵测量氧降的时间 (s) |
+| 冲洗 | 开启水泵恢复氧浓度的时间 (s) |
+| 总时长 | 实验总时长 (s) |
 
-- **数据显示**：温度 / 气压（可开关，开启后在图表右轴显示）
-- **数据展示**：数据点大小、数据线宽度、趋势线宽度（复选框 + 下拉菜单）
-- **斜率计算区**：显示/隐藏每个循环内的斜率计算区间
-- **时间格式**：秒 / 分 / 时
+修改后回车 → 自动重算 循环数/周期 → 点「保存到循环参数」写入 CSV。
 
-### 右面板（图表）
+### 4. 图像设置
 
-- **上半部分**：全局视图，显示全部数据，红色区间标记每个循环的斜率计算窗口
-- **下半部分**：当前循环放大视图，绿色趋势线 + R² 值
-- **游标**：鼠标拖动，显示相对时间（`HH:MM:SS`）和当前溶氧值
-- **底部导航**：滑块切换循环，实时更新斜率信息
+- **数据显示**：温度 / 气压曲线开关
+- **数据展示**：数据点(大小 1~6)、数据线(宽度 0.5~3)、趋势线(宽度 1~3)
+- **斜率计算区**：显示粉红色斜率计算窗口
+- **时间格式**：秒 / 分 / 时（切换后瞬时更新，无需重绘）
+- **循环切换**：滑块 / 左右箭头快速切换，仅更新高亮和局部视图
 
-## 数据格式要求
+### 5. 数据计算（需 R）
+
+- 选择导出路径后点击「计算当前通道」或「计算所有通道」
+- 确认对话框显示计算参数，确认后调用 `calc_rmr.R` 通过 respR 包计算耗氧率
+- 计算结果保存为 `rmr{通道号}.csv`
+
+## 数据格式
 
 ### xlsx 文件
 
+PreSens OXY-10 SMA 输出，**第 6 个 sheet**：
+
+| 列 | 内容 |
+|:--:|------|
+| 1 | 日期时间 |
+| 6 | 溶氧 (mg/L) |
+| 8 | 温度 (°C) |
+| 10 | 气压 (hPa) |
+
+### meas_params.csv
+
+UTF-8 BOM, 逗号分隔, 13 列：
+
+| meas_time | meas_type | rmr_type | chamber_ID | meas_batch | temperature | cycles | initial | cycle_length | cycle_start | cycle_time | flush_time | all_time |
+|-----------|-----------|----------|------------|------------|-------------|--------|---------|--------------|-------------|------------|------------|----------|
+
+- `chamber_ID`：逗号分隔的通道号，如 `"2,3,4,5,6,7,8,9"` 或单个 `"1"`
+- `rmr_type`：`fish`（实验鱼）/ `blank`（空白对照）
+- 空白行保留不删，修改参数时按日期+类型+通道匹配
+
+## 项目结构
+
 ```
-{日期}_{温度}/1.xlsx  ~  9.xlsx     对应通道 1~9
-                              sheet 6 包含:
-                              列 B: 时间 (datetime)
-                              列 G: 溶氧 O₂ (mg/L)
-                              列 I: 温度 (°C)
-                              列 K: 气压 (hPa)
+oxyviewer/
+├── main.py              # 入口 + R 环境初始化
+├── viewer.py            # 主窗口 UI + 事件处理
+├── plots.py             # pyqtgraph 渲染器（GlobalRenderer/LocalRenderer）
+├── data_loader.py       # xlsx 读取 + 参数解析 + 循环边界计算
+├── cycle_analyzer.py    # 线性回归斜率计算
+├── calc_rmr.R           # respR R 脚本（耗氧率批量计算）
+├── run.bat              # Windows 一键启动
+├── logo.png             # 应用图标
+├── requirements.txt     # Python 依赖
+└── README.md
 ```
 
-### 参数文件 `meas_params.csv`
+启动时自动创建的目录：
+- `venv/` — Python 虚拟环境
+- `renv/` — R 虚拟环境（含 `renv.lock`）
 
-逗号分隔，UTF-8 编码，13 列：
+## respR 包说明
 
-| 列 | 字段 | 示例 |
-|:-:|------|------|
-| 0 | meas_time | `20260422` |
-| 1 | meas_type | `before` / `rmr` |
-| 2 | rmr_type | `fish` / `blank` |
-| 3 | chamber_ID | `"2,3,4,5,6,7,8,9"` 或 `1` 或 `5` |
-| 4 | meas_batch | `1` / `2` |
-| 5 | temperature | `20` |
-| 6 | cycles | `81` |
-| 7 | initial | `0` |
-| 8 | cycle_length | `600` |
-| 9 | cycle_start | `120` |
-| 10 | cycle_time | `360` |
-| 11 | flush_time | `240` |
-| 12 | all_time | `48540` |
+本软件的 RMR 计算模块基于 **[respR](https://github.com/januarharianto/respR)** R 包（v2.3.4）。
 
-`chamber_ID` 为逗号分隔列表时表示通用鱼仓（多个通道共享参数），为单个数字时表示独立参数（特殊仓或空白仓）。空行留白是允许的，软件可用于手动填写。
+- **作者**：Nicholas Carey, Januar Harianto
+- **简介**：Import, Process, Analyse, and Calculate Rates from Respirometry Data
+- **CRAN**：https://CRAN.R-project.org/package=respR
+- **许可**：GPL-3
 
-## 开发
-
-```bash
-pip install -r requirements.txt
-python main.py
+Calling sequence:
+```r
+respR::inspect(data, time=3, oxygen=4)
+respR::calc_rate(dataint, from=..., to=..., by="time")
 ```
+
+If you use respR in academic work, please cite:
+
+> Carey, N. & Harianto, J. (2025). respR: Import, Process, Analyse, and Calculate Rates from Respirometry Data. R package version 2.3.4. https://CRAN.R-project.org/package=respR
 
 ## 许可
 
-MIT
+MIT License
+
+## 更新日志
+
+### v1.1.0
+- 通道类型管理（Fish/Blank/特殊），可折叠面板
+- 7 列循环参数，自动计算周期/循环数
+- ScatterPlotItem GPU 批量渲染
+- 类版渲染器，属性级更新（O(1) 切换温度/气压/数据线）
+- Excel 文件存在性检测
+- 精确参数保存（按日期+类型+通道匹配）
+
+### v1.0.0
+- 基础溶氧数据可视化
+- 循环参数编辑和保存
+- PyInstaller 独立 EXE 打包

@@ -1,14 +1,16 @@
 ﻿@echo off
 cd /d "%~dp0"
-set PYTHONPATH=
 
 if not exist "venv\Scripts\python.exe" (
-    echo [ERROR] venv not found. Run: python -m venv venv
-    echo Then: venv\Scripts\pip install -r requirements.txt
-    pause
-    exit /b 1
+    echo 创建 Python 虚拟环境...
+    python -m venv venv
+    if errorlevel 1 pause && exit /b 1
 )
 
-echo Starting OxyViewer...
+echo 安装 Python 依赖...
+"venv\Scripts\pip" install -r requirements.txt --quiet 2>nul
+
+echo 启动 OxyViewer...
+set PYTHONPATH=
 "venv\Scripts\python.exe" "main.py"
 if %errorlevel% neq 0 pause
