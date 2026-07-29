@@ -146,7 +146,16 @@ MIT License
 
 ## 更新日志
 
-### v1.1.0
+### v1.2.0
+- 数据计算模块：respR R 脚本 (calc_rmr.R)，一键计算耗氧率
+- 左侧数据计算面板（可折叠）：文件名/文件夹/计算按钮/进度条
+- renv R 虚拟环境：首次运行自动安装，TUNA 清华镜像
+- csv.DictReader/DictWriter：全部用列名匹配，防串列
+- 启动控制台详情：Python 版本、venv 路径、包版本、R 检测
+- 属性级渲染优化：温度/气压/点/线/趋势/斜率 O(1) 切换
+- _redraw_cycle 快速循环切换
+- 移除 panel.setFixedWidth，QSplitter 控制宽度
+- 应用图标 logo.png
 - 通道类型管理（Fish/Blank/特殊），可折叠面板
 - 7 列循环参数，自动计算周期/循环数
 - ScatterPlotItem GPU 批量渲染
