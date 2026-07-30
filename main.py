@@ -44,24 +44,24 @@ def _setup_renv():
     try:
         result = subprocess.run(['Rscript', '--version'], capture_output=True,
                                 text=True, timeout=10)
-        r_ver = result.stdout.strip().split('\n')[0] if result.stdout else 'unknown'
-        print(f'  [R] 检测到: {r_ver}')
+        r_ver = result.stdout.strip() if result.stdout else ''
     except Exception:
+        print('─' * 40)
         print('  [R] 未检测到 R — 计算功能不可用')
         print('      下载: https://cran.r-project.org')
         print('─' * 40)
         return
 
+    r_ver_short = r_ver.split()[-1] if r_ver else '?'
     if os.path.isdir(renv_lib) and os.listdir(renv_lib):
         pkg_count = len([n for n in os.listdir(renv_lib)
                         if os.path.isdir(os.path.join(renv_lib, n))])
-        print(f'  [R] 虚拟环境已就绪 ({pkg_count} 个包)')
-        print('─' * 40)
+        print(f'        R {r_ver_short} — renv 已就绪 ({pkg_count} 个包)')
         return
 
-    print('  [R] 首次运行，安装 R 虚拟环境...')
-    print('      镜像: mirrors.tuna.tsinghua.edu.cn/CRAN')
-    print('      预计下载 ~30 MB，请耐心等待\n')
+    print(f'        R {r_ver_short} — 首次运行，安装 R 包...')
+    print(f'        CRAN 镜像: mirrors.tuna.tsinghua.edu.cn/CRAN')
+    print(f'        预计下载 ~30 MB\n')
 
     # 分步安装以显示进度
     steps = [
@@ -92,44 +92,49 @@ def _setup_renv():
     except Exception:
         pass
 
-    print('─' * 40)
-
 
 def main():
     print('═' * 50)
     print('  OxyViewer — 溶氧数据可视化工具')
     print('═' * 50)
-    print(f'  [Py] Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')
-    # 虚拟环境路径
-    venv = os.environ.get('VIRTUAL_ENV', '')
-    if venv:
-        print(f'  [Py] venv: {venv}')
-    else:
-        # check if running from project venv
-        exe = sys.executable
-        if 'venv' in exe:
-            print(f'  [Py] venv: {os.path.dirname(os.path.dirname(exe))}')
 
-    # 关键包版本
+    # ── [1/3] Python 环境 ──
+    print()
+    print('  [1/3] Python 环境')
+    print(f'        解释器: Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')
+    venv_dir = os.environ.get('VIRTUAL_ENV', '')
+    if not venv_dir and 'venv' in sys.executable:
+        venv_dir = os.path.dirname(os.path.dirname(sys.executable))
+    if venv_dir:
+        print(f'        虚拟环境: {venv_dir}')
+    else:
+        print('        虚拟环境: 无')
+
+    # 第三方包
+    pkgs = []
     try:
         from PyQt5.QtCore import QT_VERSION_STR
-        print(f'  [Py] PyQt5 {QT_VERSION_STR}')
-    except Exception:
-        pass
-    for pkg in ['pyqtgraph', 'numpy', 'openpyxl']:
+        pkgs.append(f'PyQt5 {QT_VERSION_STR}')
+    except Exception: pass
+    for name in ['pyqtgraph', 'numpy', 'openpyxl']:
         try:
-            mod = __import__(pkg)
-            print(f'  [Py] {pkg} {mod.__version__}')
-        except Exception:
-            pass
+            mod = __import__(name)
+            pkgs.append(f'{name} {mod.__version__}')
+        except Exception: pass
+    if pkgs:
+        print(f'        关键包: {", ".join(pkgs)}')
 
+    # ── [2/3] R 环境 ──
     _setup_renv()
 
-    print('  [Py] 启动 Qt 界面...')
+    # ── [3/3] 启动界面 ──
+    print()
+    print('  [3/3] 启动 Qt 界面')
     try:
         from PyQt5 import QtWidgets
         app = QtWidgets.QApplication(sys.argv)
         app.setStyle('Fusion')
+        print('        Qt 初始化完成')
     except Exception as e:
         show_error('Qt 初始化失败', traceback.format_exc())
         return 1
@@ -138,6 +143,7 @@ def main():
         from viewer import OxyViewer
         window = OxyViewer()
         window.show()
+        print('        主窗口已启动\n')
         return app.exec_()
     except Exception as e:
         show_error('启动失败', traceback.format_exc())
