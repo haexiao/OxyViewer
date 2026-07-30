@@ -625,10 +625,14 @@ class OxyViewer(QtWidgets.QMainWindow):
         with open(csv_path, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
             fieldnames = list(reader.fieldnames)
-            # 确保 chamber_ID 在 fieldnames 中
-            if 'chamber_ID' not in fieldnames:
-                idx = fieldnames.index('rmr_type') + 1
-                fieldnames.insert(idx, 'chamber_ID')
+            # 检查必要列
+            required = ['chamber_ID', 'rmr_type', 'meas_time', 'cycles', 'cycle_length']
+            missing = [c for c in required if c not in fieldnames]
+            if missing:
+                QtWidgets.QMessageBox.critical(self, '参数文件格式错误',
+                    f'meas_params.csv 缺少以下列:\n{", ".join(missing)}\n\n'
+                    '请确认文件格式正确后再操作。')
+                return
             rows = [dict(r) for r in reader]
 
         # ── 当前通道分类 ──
@@ -1117,10 +1121,14 @@ class OxyViewer(QtWidgets.QMainWindow):
         with open(csv_path, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
             fieldnames = list(reader.fieldnames)
-            # 确保 chamber_ID 在 fieldnames 中
-            if 'chamber_ID' not in fieldnames:
-                idx = fieldnames.index('rmr_type') + 1
-                fieldnames.insert(idx, 'chamber_ID')
+            # 检查必要列
+            required = ['chamber_ID', 'rmr_type', 'meas_time', 'cycles', 'cycle_length']
+            missing = [c for c in required if c not in fieldnames]
+            if missing:
+                QtWidgets.QMessageBox.critical(self, '参数文件格式错误',
+                    f'meas_params.csv 缺少以下列:\n{", ".join(missing)}\n\n'
+                    '请确认文件格式正确后再操作。')
+                return
             rows = [dict(r) for r in reader]
 
         date_str = self._date_edit.text().strip()
@@ -1376,6 +1384,28 @@ class OxyViewer(QtWidgets.QMainWindow):
         params_csv = self._params_file_edit.text() or os.path.join(
             os.path.dirname(data_folder), 'raw', 'meas_params.csv')
         export_folder = self._rmr_get_export_folder()
+
+        # 验证参数文件格式
+        if not os.path.isfile(params_csv):
+            QtWidgets.QMessageBox.critical(self, '错误',
+                f'参数文件不存在:\n{params_csv}')
+            return
+        try:
+            import csv as _csv
+            with open(params_csv, 'r', encoding='utf-8-sig') as _f:
+                _fields = _csv.DictReader(_f).fieldnames or []
+            _required = ['chamber_ID', 'rmr_type', 'meas_time', 'cycles', 'cycle_length']
+            _missing = [c for c in _required if c not in _fields]
+            if _missing:
+                QtWidgets.QMessageBox.critical(self, '参数文件格式错误',
+                    f'{os.path.basename(params_csv)} 缺少以下列:\n'
+                    f'{", ".join(_missing)}\n\n请确认文件格式正确后再计算。')
+                return
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, '错误',
+                f'读取参数文件失败:\n{e}')
+            return
+
         if not os.path.isdir(export_folder):
             QtWidgets.QMessageBox.warning(self, '警告', f'导出文件夹不存在:\n{export_folder}')
             return
