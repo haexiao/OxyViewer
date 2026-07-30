@@ -574,6 +574,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         """点击通道按钮：切换活动通道并加载数据。"""
         if self._active_channel == ch:
             return
+        print(f'  [UI] 切换通道: {self._active_channel} → {ch}')
         self._active_channel = ch
         self._update_channel_button_styles()
         # 取消其他按钮的选中
@@ -709,6 +710,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         self._params_status.setText('通道设置已保存！')
         QtWidgets.QMessageBox.information(self, '成功', '通道设置已保存到参数文件。')
+        print(f'  [UI] 通道设置已保存')
 
     def _detect_channels(self, folder):
         """扫描文件夹, 返回存在的通道号列表。"""
@@ -985,6 +987,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         try:
             self._data = load_xlsx(filepath)
+            print(f'  [UI] 加载数据: {os.path.basename(filepath)} ({self._data["nrows"]} 行)')
         except Exception as e:
             QtWidgets.QMessageBox.critical(
                 self, '错误', f'读取 xlsx 失败:\\n{e}')
@@ -1173,6 +1176,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         self._params_status.setText('参数已保存！')
         QtWidgets.QMessageBox.information(self, '成功', '循环参数已保存到文件。')
+        print(f'  [UI] 循环参数已保存')
 
     # ════════════════════════════════════════════════════
     #  绘图
@@ -1421,6 +1425,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         if reply != QtWidgets.QMessageBox.Yes:
             return
 
+        print(f'  [UI] 开始 R 计算: 通道 {ch_str}')
         self._rmr_success_msg = success_msg
         self._rmr_progress.setVisible(True)
         self._rmr_status.setText(f'正在计算通道 {ch_str}...')
@@ -1460,7 +1465,9 @@ class OxyViewer(QtWidgets.QMainWindow):
     def _on_rmr_finished(self, exit_code, exit_status):
         self._rmr_progress.setVisible(False)
         if exit_status == QtCore.QProcess.NormalExit and exit_code == 0:
-            self._rmr_status.setText(self._rmr_success_msg or '计算完成！')
+            status = self._rmr_success_msg or '计算完成！'
+            self._rmr_status.setText(status)
+            print(f'  [UI] R 计算完成: {status}')
         else:
             err = bytes(self._rmr_process.readAllStandardError()).decode('utf-8', errors='replace')
             self._rmr_status.setText('计算失败，请查看 R 输出。')
