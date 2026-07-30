@@ -1430,11 +1430,11 @@ class OxyViewer(QtWidgets.QMainWindow):
         r_libs_path = os.path.join(project_root, 'renv', 'library')
         self._rmr_process = QtCore.QProcess(self)
         self._rmr_process.setWorkingDirectory(export_folder)
-        # 只传必要环境变量
-        env_list = [f'PATH={os.environ.get("PATH", "")}',
-                    f'RENV_PROJECT={project_root}',
-                    f'R_LIBS={r_libs_path}']
-        self._rmr_process.setEnvironment(env_list)
+        # 设置环境变量 (兼容 PyQt5 < 5.15.3)
+        proc_env = QtCore.QProcessEnvironment.systemEnvironment()
+        proc_env.insert('RENV_PROJECT', project_root)
+        proc_env.insert('R_LIBS', r_libs_path)
+        self._rmr_process.setProcessEnvironment(proc_env)
 
         self._rmr_process.finished.connect(self._on_rmr_finished)
         self._rmr_process.errorOccurred.connect(self._on_rmr_error)
