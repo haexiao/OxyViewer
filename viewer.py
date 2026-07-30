@@ -1426,38 +1426,51 @@ class OxyViewer(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
         if reply != QtWidgets.QMessageBox.Yes:
             return
-        import subprocess
+
+        self._rmr_running = True
+        self._rmr_success_msg = success_msg
         self._rmr_progress.setVisible(True)
         self._rmr_status.setText(f'正在计算通道 {ch_str}...')
-        QtWidgets.QApplication.processEvents()
 
-        # renv 项目路径
+        # ── QProcess 异步调用，不阻塞 UI ──
         project_root = os.path.dirname(os.path.abspath(__file__))
-        env = os.environ.copy()
-        env['RENV_PROJECT'] = project_root
-        try:
-            result = subprocess.run(
-                ['Rscript', r_script, data_folder, params_csv, date_str, ch_str],
-                capture_output=True, text=True, timeout=300,
-                cwd=export_folder, env=env)
-            if result.returncode == 0:
-                self._rmr_progress.setVisible(False)
-                self._rmr_status.setText(success_msg or '计算完成！')
-            else:
-                self._rmr_progress.setVisible(False)
-                self._rmr_status.setText('计算失败，请查看 R 输出。')
-                QtWidgets.QMessageBox.critical(self, 'R 错误',
-                    f'R 脚本返回值 {result.returncode}\n\n{result.stderr[:500]}')
-        except FileNotFoundError:
-            self._rmr_progress.setVisible(False)
+        self._rmr_process = QtCore.QProcess(self)
+        self._rmr_process.setWorkingDirectory(export_folder)
+        env_list = [f'{k}={v}' for k, v in os.environ.items()]
+        env_list.append(f'RENV_PROJECT={project_root}')
+        self._rmr_process.setEnvironment(env_list)
+
+        self._rmr_process.finished.connect(self._on_rmr_finished)
+        self._rmr_process.errorOccurred.connect(self._on_rmr_error)
+        self._rmr_process.readyReadStandardError.connect(self._on_rmr_output)
+
+        self._rmr_process.start('Rscript',
+            [r_script, data_folder, params_csv, date_str, ch_str])
+
+    def _on_rmr_output(self):
+        data = bytes(self._rmr_process.readAllStandardError()).decode('utf-8', errors='replace')
+        lines = [l for l in data.strip().split('\n') if l.strip()]
+        if lines:
+            self._rmr_status.setText(lines[-1])  # 显示最后一行
+
+    def _on_rmr_error(self, error):
+        self._rmr_progress.setVisible(False)
+        if error == QtCore.QProcess.FailedToStart:
             self._rmr_status.setText('Rscript 未找到，请确认已安装 R。')
-        except subprocess.TimeoutExpired:
-            self._rmr_progress.setVisible(False)
-            self._rmr_status.setText('计算超时。')
-        except Exception as e:
-            self._rmr_progress.setVisible(False)
-            self._rmr_status.setText('计算异常。')
-            QtWidgets.QMessageBox.critical(self, '错误', str(e))
+        else:
+            self._rmr_status.setText(f'计算异常 (错误码 {error})')
+        self._rmr_running = False
+
+    def _on_rmr_finished(self, exit_code, exit_status):
+        self._rmr_progress.setVisible(False)
+        if exit_status == QtCore.QProcess.NormalExit and exit_code == 0:
+            self._rmr_status.setText(self._rmr_success_msg or '计算完成！')
+        else:
+            err = bytes(self._rmr_process.readAllStandardError()).decode('utf-8', errors='replace')
+            self._rmr_status.setText('计算失败，请查看 R 输出。')
+            QtWidgets.QMessageBox.critical(self, 'R 错误',
+                f'R 脚本返回值 {exit_code}\n\n{err[:500]}')
+        self._rmr_running = False
 
 
 # ════════════════════════════════════════════════════════
