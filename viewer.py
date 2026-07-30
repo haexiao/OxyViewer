@@ -1392,10 +1392,11 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._rmr_progress.setVisible(True)
         self._rmr_status.setText(f'正在计算通道 {ch_str}...')
         QtWidgets.QApplication.processEvents()
-        r_libs = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'renv', 'library')
+
+        # renv 项目路径
+        project_root = os.path.dirname(os.path.abspath(__file__))
         env = os.environ.copy()
-        if os.path.isdir(r_libs):
-            env['R_LIBS'] = r_libs
+        env['RENV_PROJECT'] = project_root
         try:
             result = subprocess.run(
                 ['Rscript', r_script, data_folder, params_csv, date_str, ch_str],

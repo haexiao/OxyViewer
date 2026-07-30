@@ -22,6 +22,11 @@ library(respR)
 library(lubridate)
 library(readxl)
 
+# 激活 renv 项目环境
+if (Sys.getenv("RENV_PROJECT") != "") {
+    renv::load(Sys.getenv("RENV_PROJECT"))
+}
+
 # 禁止生成 rplot.pdf
 pdf(NULL)
 
