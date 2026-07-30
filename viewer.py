@@ -1411,13 +1411,14 @@ class OxyViewer(QtWidgets.QMainWindow):
             return
         r_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calc_rmr.R')
         date_str = self._date_edit.text() or os.path.basename(data_folder)[:8]
-        ch_str = ','.join(str(c) for c in channels)
+        ch_str = ','.join(str(c) for c in channels)  # R脚本用(无空格)
+        ch_display = ', '.join(str(c) for c in channels)  # 界面显示用
         msg_parts = [
             '即将调用 R 计算:',
             f'  数据文件夹: {data_folder}',
             f'  参数文件:   {params_csv}',
             f'  实验日期:   {date_str}',
-            f'  通道:       {ch_str}',
+            f'  通道:       {ch_display}',
             f'  导出到:     {export_folder}',
             '', '是否继续？',
         ]
@@ -1428,7 +1429,7 @@ class OxyViewer(QtWidgets.QMainWindow):
             return
         import subprocess
         self._rmr_progress.setVisible(True)
-        self._rmr_status.setText(f'正在计算通道 {ch_str}...')
+        self._rmr_status.setText(f'正在计算通道 {ch_display}...')
         QtWidgets.QApplication.processEvents()
 
         # renv 项目路径
