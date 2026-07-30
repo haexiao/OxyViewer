@@ -93,16 +93,6 @@ def _setup_renv():
         pass
 
     print('─' * 40)
-    try:
-        from PyQt5.QtWidgets import QApplication, QMessageBox
-        app = QApplication.instance() or QApplication(sys.argv)
-        QMessageBox.critical(None, f'OxyViewer — {title}', msg)
-    except Exception:
-        try:
-            import tkinter.messagebox as mb
-            mb.showerror(f'OxyViewer — {title}', msg)
-        except Exception:
-            pass
 
 
 def main():

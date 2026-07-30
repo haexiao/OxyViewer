@@ -1,17 +1,12 @@
 """OxyViewer — 溶氧数据可视化工具 · 主窗口 (PyQt5 + pyqtgraph)"""
 import os
 import re
-import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets, QtGui
 
 from data_loader import load_xlsx, load_params, compute_cycle_boundaries
 from cycle_analyzer import compute_slope
 from plots import GlobalRenderer, LocalRenderer, find_nearest
-
-# ── 默认路径 (首次启动为空，之后通过 QSettings 记忆) ──
-DEFAULT_DATA_DIR = ''
-DEFAULT_PARAMS = ''
 
 # ── 样式 ──────────────────────────────────────────────
 STYLE = """
@@ -38,8 +33,6 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._params = None              # 当前选中的循环参数行
         self._cycle_bounds = None
         self._current_cycle = 1
-        self._show_points = True
-        self._show_lines = True
         self._active_channel = 1          # 当前选中的通道
         # 通道类型: {channel_num: 'fish'|'blank'|'special'}
         self._channel_types = {}
@@ -504,7 +497,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         """重新构建通道行 (ch_from ~ ch_to)。"""
         # 清除旧行
         for w in self._channel_rows.values():
-            w.setParent(None)
+            w.deleteLater()
         self._channel_rows.clear()
         self._channel_buttons.clear()
 
@@ -676,12 +669,14 @@ class OxyViewer(QtWidgets.QMainWindow):
             if ch in removed_special:
                 idx, row, _ = csv_special_chs[ch]
                 del rows[idx]
-                for sp in special_rows:
+                # 更新 special_rows 中的索引
+                for i in range(len(special_rows)):
+                    sp = special_rows[i]
                     if sp[0] > idx:
-                        sp = (sp[0] - 1, sp[1], sp[2])
-                if blank_idx and blank_idx > idx:
+                        special_rows[i] = (sp[0] - 1, sp[1], sp[2])
+                if blank_idx is not None and blank_idx > idx:
                     blank_idx -= 1
-                if fish_general_idx and fish_general_idx > idx:
+                if fish_general_idx is not None and fish_general_idx > idx:
                     fish_general_idx -= 1
                 if ch not in fish_chs:
                     fish_chs.append(ch)
@@ -732,10 +727,9 @@ class OxyViewer(QtWidgets.QMainWindow):
         date_str = self._date_edit.text().strip()
         if not date_str:
             return
-        # 重置
-        for ch in range(1, 10):
+        # 重置为 fish
+        for ch in range(1, 20):
             self._channel_types[ch] = 'fish'
-        self._channel_types[1] = 'blank'
 
         for p in self._params_list:
             if p['meas_time'] != date_str:
@@ -1427,17 +1421,19 @@ class OxyViewer(QtWidgets.QMainWindow):
         if reply != QtWidgets.QMessageBox.Yes:
             return
 
-        self._rmr_running = True
         self._rmr_success_msg = success_msg
         self._rmr_progress.setVisible(True)
         self._rmr_status.setText(f'正在计算通道 {ch_str}...')
 
         # ── QProcess 异步调用，不阻塞 UI ──
         project_root = os.path.dirname(os.path.abspath(__file__))
+        r_libs_path = os.path.join(project_root, 'renv', 'library')
         self._rmr_process = QtCore.QProcess(self)
         self._rmr_process.setWorkingDirectory(export_folder)
-        env_list = [f'{k}={v}' for k, v in os.environ.items()]
-        env_list.append(f'RENV_PROJECT={project_root}')
+        # 只传必要环境变量
+        env_list = [f'PATH={os.environ.get("PATH", "")}',
+                    f'RENV_PROJECT={project_root}',
+                    f'R_LIBS={r_libs_path}']
         self._rmr_process.setEnvironment(env_list)
 
         self._rmr_process.finished.connect(self._on_rmr_finished)
@@ -1459,7 +1455,6 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._rmr_status.setText('Rscript 未找到，请确认已安装 R。')
         else:
             self._rmr_status.setText(f'计算异常 (错误码 {error})')
-        self._rmr_running = False
 
     def _on_rmr_finished(self, exit_code, exit_status):
         self._rmr_progress.setVisible(False)
@@ -1470,7 +1465,6 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._rmr_status.setText('计算失败，请查看 R 输出。')
             QtWidgets.QMessageBox.critical(self, 'R 错误',
                 f'R 脚本返回值 {exit_code}\n\n{err[:500]}')
-        self._rmr_running = False
 
 
 # ════════════════════════════════════════════════════════
