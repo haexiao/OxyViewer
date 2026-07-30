@@ -1445,9 +1445,10 @@ class OxyViewer(QtWidgets.QMainWindow):
 
     def _on_rmr_output(self):
         data = bytes(self._rmr_process.readAllStandardError()).decode('utf-8', errors='replace')
-        lines = [l for l in data.strip().split('\n') if l.strip()]
-        if lines:
-            self._rmr_status.setText(lines[-1])  # 显示最后一行
+        for line in data.strip().split('\n'):
+            line = line.strip()
+            if line:
+                print(f'  [R] {line}')
 
     def _on_rmr_error(self, error):
         self._rmr_progress.setVisible(False)
