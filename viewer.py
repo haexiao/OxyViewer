@@ -624,7 +624,11 @@ class OxyViewer(QtWidgets.QMainWindow):
         import csv
         with open(csv_path, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
-            fieldnames = reader.fieldnames
+            fieldnames = list(reader.fieldnames)
+            # 确保 chamber_ID 在 fieldnames 中
+            if 'chamber_ID' not in fieldnames:
+                idx = fieldnames.index('rmr_type') + 1
+                fieldnames.insert(idx, 'chamber_ID')
             rows = [dict(r) for r in reader]
 
         # ── 当前通道分类 ──
@@ -1112,7 +1116,11 @@ class OxyViewer(QtWidgets.QMainWindow):
         import csv
         with open(csv_path, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
-            fieldnames = reader.fieldnames
+            fieldnames = list(reader.fieldnames)
+            # 确保 chamber_ID 在 fieldnames 中
+            if 'chamber_ID' not in fieldnames:
+                idx = fieldnames.index('rmr_type') + 1
+                fieldnames.insert(idx, 'chamber_ID')
             rows = [dict(r) for r in reader]
 
         date_str = self._date_edit.text().strip()
