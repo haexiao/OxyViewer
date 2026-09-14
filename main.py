@@ -188,5 +188,21 @@ def main():
         return 1
 
 
+def _run_frozen_engine(script, script_args):
+    """打包版 (PyInstaller) 专用：用 EXE 自身执行 Python 计算引擎脚本。
+
+    onefile 打包后 sys.executable 指向 OxyViewer.exe 而不是 python.exe，
+    直接调用会重新启动 GUI，因此这里拦截 --run-py-engine 参数，
+    在当前进程里执行目标脚本（与 `python calc_rmr.py ...` 等价）。
+    """
+    sys.argv = [script] + list(script_args)
+    with open(script, encoding='utf-8') as f:
+        code = compile(f.read(), script, 'exec')
+    exec(code, {'__name__': '__main__', '__file__': script})
+
+
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == '--run-py-engine':
+        _run_frozen_engine(sys.argv[2], sys.argv[3:])
+        sys.exit(0)
     sys.exit(main())

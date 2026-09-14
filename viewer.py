@@ -1455,8 +1455,12 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._rmr_process.readyReadStandardError.connect(self._on_rmr_output)
 
         if use_py:
-            self._rmr_process.start(sys.executable,
-                [py_script, data_folder, params_csv, date_str, ch_str])
+            py_args = [py_script, data_folder, params_csv, date_str, ch_str]
+            if getattr(sys, 'frozen', False):
+                # 打包版：sys.executable 是 OxyViewer.exe，用其内嵌入口执行脚本
+                self._rmr_process.start(sys.executable, ['--run-py-engine'] + py_args)
+            else:
+                self._rmr_process.start(sys.executable, py_args)
         else:
             self._rmr_process.start('Rscript',
                 [r_script, data_folder, params_csv, date_str, ch_str])
