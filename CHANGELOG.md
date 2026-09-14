@@ -2,6 +2,24 @@
 
 OxyViewer 所有值得注意的变更都记录在此文件。
 
+## [v1.3.2] - 2026-09-14
+
+### 修复
+
+- **打包版所有曲线不显示**（溶氧/温度/气压/趋势线一条都不画，坐标轴正常）——
+  pyqtgraph 用字符串动态导入 `PyQt5._QOpenGLFunctions_4_1_Core` 等私有模块来取
+  OpenGL 函数入口，PyInstaller 静态分析扫不到，没打包 → 动态导入失败被 `except`
+  吞掉 → 抛 `RuntimeError` 后 pyqtgraph 放弃 GL 绘制。现在在 `main.py` 的
+  `_opengl_ready()` 里显式引用这些模块，打包配置也加了对应的 `--hidden-import`。
+- **打包版没有图标** —— 一是 EXE 文件图标（缺 `--icon`），二是窗口/任务栏图标
+  （`logo.png` 没打进包，`viewer.py` 里 `os.path.isfile()` 判断失败就跳过了设置）。
+  现已补上 `--icon=packaging/OxyViewer.ico` 与 `--add-data "logo.png;."`。
+
+### 新增
+
+- `packaging/self_test.py`：渲染自检脚本，可在打包环境里验证曲线能否绘制
+- `main.py --gl-test`：OpenGL 上下文自检（创建 QOpenGLWidget 检查上下文有效性）
+
 ## [v1.3.1] - 2026-09-14
 
 ### 变更
