@@ -9,7 +9,7 @@ OxyViewer 所有值得注意的变更都记录在此文件。
 - 发布拆分为两个固定引擎的独立版本，下载后无需再选择：
   - **`OxyViewer-R.exe`** —— 默认使用 R 计算引擎
   - **`OxyViewer-Python.exe`** —— 默认使用 Python 计算引擎（**无需安装 R**）
-- 新增 `build.bat`：一键打包上述两个版本
+- 新增 `packaging/build.bat`：一键打包上述两个版本（与 hook 文件一起放在 `packaging/` 目录）
 - 两个版本通过 PyInstaller runtime hook（`engine_hook_r.py` / `engine_hook_p.py`）固化默认引擎，
   用户仍可用环境变量 `OXY_ENGINE` 临时覆盖；源码运行行为不变
 

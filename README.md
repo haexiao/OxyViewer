@@ -138,8 +138,13 @@ oxyviewer/
 ├── calc_rmr.R           # R 计算引擎（respR，耗氧率批量计算）
 ├── calc_rmr.py          # Python 计算引擎（resprpy，与上者接口一致）
 ├── run.bat              # Windows 一键启动（选择计算引擎）
+├── packaging/           # 打包相关文件
+│   ├── build.bat        #   一键打包 R 版 / Python 版
+│   ├── engine_hook_r.py #   runtime hook：默认 R 引擎
+│   └── engine_hook_p.py #   runtime hook：默认 Python 引擎
 ├── logo.png             # 应用图标
 ├── requirements.txt     # Python 依赖
+├── CHANGELOG.md         # 更新日志
 └── README.md
 ```
 
