@@ -4,12 +4,25 @@
 
 ## 快速开始
 
-### 环境要求
+### 方式一：下载打包版（推荐）
+
+从 [Releases](https://github.com/haexiao/OxyViewer/releases) 下载，两个版本按需选择：
+
+| 版本 | 计算引擎 | 是否需要安装 R |
+|---|---|---|
+| `OxyViewer-R.exe` | R（respR + renv） | 需要 |
+| `OxyViewer-Python.exe` | Python（resprpy） | **不需要** |
+
+两个版本结果一致，只是默认引擎不同。
+
+### 方式二：从源码运行
+
+#### 环境要求
 
 - **Python 3.10+**（必须）
 - **R 4.4+**（可选 —— 只有选择 R 计算引擎时才需要）
 
-### 首次使用
+#### 首次使用
 
 **双击 `run.bat`** 即可，启动时会让你选择耗氧率计算引擎：
 
@@ -30,7 +43,7 @@
 
 选 Python 引擎时完全不需要安装 R。两个引擎结果一致 —— 在 9 通道实测数据上最大相对差 `1.2e-13`（约 76% 的数值逐位相同）。
 
-### 手动 Python 环境
+#### 手动 Python 环境
 
 ```bash
 python -m venv venv
@@ -38,7 +51,7 @@ venv\Scripts\pip install -r requirements.txt
 venv\Scripts\python main.py
 ```
 
-### R 环境（可选）
+#### R 环境（可选）
 
 ```bash
 # 安装 R: https://cran.r-project.org
@@ -83,10 +96,10 @@ Rscript -e "install.packages(c('respR','lubridate','readxl'))"
 - **时间格式**：秒 / 分 / 时（切换后瞬时更新，无需重绘）
 - **循环切换**：滑块 / 左右箭头快速切换，仅更新高亮和局部视图
 
-### 5. 数据计算（需 R）
+### 5. 数据计算
 
 - 选择导出路径后点击「计算当前通道」或「计算所有通道」
-- 确认对话框显示计算参数，确认后调用 `calc_rmr.R` 通过 respR 包计算耗氧率
+- 确认对话框显示计算参数和当前使用的引擎，确认后调用 `calc_rmr.R`（R 引擎）或 `calc_rmr.py`（Python 引擎）计算耗氧率
 - 计算结果保存为 `rmr{通道号}.csv`
 
 ## 数据格式

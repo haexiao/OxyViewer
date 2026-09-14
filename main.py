@@ -32,6 +32,28 @@ def show_error(title, msg):
     print(f'\n=== {title} ===\n{msg}\n', file=sys.stderr)
 
 
+def _resolve_engine():
+    """确定计算引擎，优先级：环境变量 OXY_ENGINE > 打包配置 > 默认 R。
+
+    打包时可以带一个 engine_default.txt（内容为 R 或 python）来固化该 EXE
+    的计算引擎，这样同一个源码能打出「R 版」和「Python 版」两个 exe。
+    解析结果写回环境变量，viewer.py 读取同一变量，保证两处一致。
+    """
+    eng = os.environ.get('OXY_ENGINE', '').strip()
+    if not eng:
+        cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           'engine_default.txt')
+        try:
+            with open(cfg, encoding='utf-8') as f:
+                eng = f.read().strip()
+        except Exception:
+            eng = ''
+    if not eng:
+        eng = 'R'
+    os.environ['OXY_ENGINE'] = eng
+    return eng
+
+
 def _engine_is_python():
     """当前选择的是否为 Python (resprpy) 计算引擎。"""
     eng = os.environ.get('OXY_ENGINE', 'R').strip().lower()
@@ -132,6 +154,10 @@ def main():
     print('═' * 50)
     print('  OxyViewer — 溶氧数据可视化工具')
     print('═' * 50)
+
+    # ── [0/3] 计算引擎 ──
+    engine = _resolve_engine()
+    print(f'  计算引擎: {engine}')
 
     # ── [1/3] Python 环境 ──
     print()
