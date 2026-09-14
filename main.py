@@ -20,6 +20,13 @@ def _opengl_ready():
     try:
         from OpenGL import GL      # noqa: F401  PyOpenGL
         import PyQt5.QtOpenGL      # noqa: F401  Qt 的 GL 模块
+        # pyqtgraph 是用字符串动态导入下面这些「私有」模块来取 GL 函数入口的
+        # (OpenGLHelpers.py: importlib.import_module("PyQt5._QOpenGLFunctions_4_1_Core"))，
+        # PyInstaller 静态分析扫不到它们，不在这里显式引用就会漏打包，
+        # 症状正是「坐标轴正常但所有曲线都不画」。
+        from PyQt5 import _QOpenGLFunctions_4_1_Core  # noqa: F401
+        from PyQt5 import _QOpenGLFunctions_2_1       # noqa: F401
+        from PyQt5 import _QOpenGLFunctions_2_0       # noqa: F401
     except ImportError:
         return False
     if getattr(sys, 'frozen', False):
