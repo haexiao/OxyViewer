@@ -1,6 +1,7 @@
 """OxyViewer — 溶氧数据可视化工具 · 主窗口 (PyQt5 + pyqtgraph)"""
 import os
 import re
+import sys
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets, QtGui
 
@@ -1408,10 +1409,15 @@ class OxyViewer(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, '警告', f'导出文件夹不存在:\n{export_folder}')
             return
         r_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calc_rmr.R')
+        py_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calc_rmr.py')
         date_str = self._date_edit.text() or os.path.basename(data_folder)[:8]
         ch_str = ','.join(str(c) for c in channels)
+        # ── 计算引擎：环境变量 OXY_ENGINE = R(默认) | python ──
+        engine = os.environ.get('OXY_ENGINE', 'R').strip().lower()
+        use_py = engine in ('python', 'py', 'p', 'resprpy')
+        engine_name = 'Python (resprpy)' if use_py else 'R'
         msg_parts = [
-            '即将调用 R 计算:',
+            f'即将调用 {engine_name} 计算:',
             f'  数据文件夹: {data_folder}',
             f'  参数文件:   {params_csv}',
             f'  实验日期:   {date_str}',
@@ -1420,59 +1426,72 @@ class OxyViewer(QtWidgets.QMainWindow):
             '', '是否继续？',
         ]
         reply = QtWidgets.QMessageBox.question(
-            self, '确认 R 计算', '\n'.join(msg_parts),
+            self, f'确认 {engine_name} 计算', '\n'.join(msg_parts),
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
         if reply != QtWidgets.QMessageBox.Yes:
             return
 
-        print(f'  [UI] 开始 R 计算: 通道 {ch_str}')
+        print(f'  [UI] 开始 {engine_name} 计算: 通道 {ch_str}')
         self._rmr_success_msg = success_msg
+        self._rmr_engine_name = engine_name
+        self._rmr_engine_tag = 'PY' if use_py else 'R'
         self._rmr_progress.setVisible(True)
         self._rmr_status.setText(f'正在计算通道 {ch_str}...')
 
         # ── QProcess 异步调用，不阻塞 UI ──
         project_root = os.path.dirname(os.path.abspath(__file__))
-        r_libs_path = os.path.join(project_root, 'renv', 'library')
         self._rmr_process = QtCore.QProcess(self)
         self._rmr_process.setWorkingDirectory(export_folder)
         # 设置环境变量 (兼容 PyQt5 < 5.15.3)
         proc_env = QtCore.QProcessEnvironment.systemEnvironment()
-        proc_env.insert('RENV_PROJECT', project_root)
-        proc_env.insert('R_LIBS', r_libs_path)
+        if not use_py:                      # R 引擎才需要 renv 环境
+            r_libs_path = os.path.join(project_root, 'renv', 'library')
+            proc_env.insert('RENV_PROJECT', project_root)
+            proc_env.insert('R_LIBS', r_libs_path)
         self._rmr_process.setProcessEnvironment(proc_env)
 
         self._rmr_process.finished.connect(self._on_rmr_finished)
         self._rmr_process.errorOccurred.connect(self._on_rmr_error)
         self._rmr_process.readyReadStandardError.connect(self._on_rmr_output)
 
-        self._rmr_process.start('Rscript',
-            [r_script, data_folder, params_csv, date_str, ch_str])
+        if use_py:
+            self._rmr_process.start(sys.executable,
+                [py_script, data_folder, params_csv, date_str, ch_str])
+        else:
+            self._rmr_process.start('Rscript',
+                [r_script, data_folder, params_csv, date_str, ch_str])
 
     def _on_rmr_output(self):
         data = bytes(self._rmr_process.readAllStandardError()).decode('utf-8', errors='replace')
+        tag = getattr(self, '_rmr_engine_tag', 'R')
         for line in data.strip().split('\n'):
             line = line.strip()
             if line:
-                print(f'  [R] {line}')
+                print(f'  [{tag}] {line}')
 
     def _on_rmr_error(self, error):
         self._rmr_progress.setVisible(False)
+        engine_name = getattr(self, '_rmr_engine_name', 'R')
         if error == QtCore.QProcess.FailedToStart:
-            self._rmr_status.setText('Rscript 未找到，请确认已安装 R。')
+            if getattr(self, '_rmr_engine_tag', 'R') == 'PY':
+                self._rmr_status.setText('Python 计算引擎启动失败，请检查 resprpy 是否已安装。')
+            else:
+                self._rmr_status.setText('Rscript 未找到，请确认已安装 R。')
         else:
-            self._rmr_status.setText(f'计算异常 (错误码 {error})')
+            self._rmr_status.setText(f'{engine_name} 计算异常 (错误码 {error})')
 
     def _on_rmr_finished(self, exit_code, exit_status):
         self._rmr_progress.setVisible(False)
+        engine_name = getattr(self, '_rmr_engine_name', 'R')
         if exit_status == QtCore.QProcess.NormalExit and exit_code == 0:
             status = self._rmr_success_msg or '计算完成！'
             self._rmr_status.setText(status)
-            print(f'  [UI] R 计算完成: {status}')
+            print(f'  [UI] {engine_name} 计算完成: {status}')
         else:
             err = bytes(self._rmr_process.readAllStandardError()).decode('utf-8', errors='replace')
-            self._rmr_status.setText('计算失败，请查看 R 输出。')
-            QtWidgets.QMessageBox.critical(self, 'R 错误',
-                f'R 脚本返回值 {exit_code}\n\n{err[:500]}')
+            self._rmr_status.setText('计算失败，请查看输出。')
+            QtWidgets.QMessageBox.critical(self, f'{engine_name} 错误',
+                f'计算脚本返回值 {exit_code}\n\n{err[:500]}')
 
 
 # ════════════════════════════════════════════════════════

@@ -32,6 +32,41 @@ def show_error(title, msg):
     print(f'\n=== {title} ===\n{msg}\n', file=sys.stderr)
 
 
+def _engine_is_python():
+    """当前选择的是否为 Python (resprpy) 计算引擎。"""
+    eng = os.environ.get('OXY_ENGINE', 'R').strip().lower()
+    return eng in ('python', 'py', 'p', 'resprpy')
+
+
+def _setup_pyengine():
+    """检查 Python 计算引擎 (resprpy) — 计算依赖。"""
+    import subprocess
+
+    print('─' * 40)
+    print('  [P] 计算引擎检查 (Python / resprpy)')
+
+    try:
+        import resprpy
+        print(f'        resprpy {resprpy.__version__} 已就绪')
+    except ImportError:
+        print('        未安装 resprpy — 正在自动安装...')
+        try:
+            subprocess.run([sys.executable, '-m', 'pip', 'install', 'resprpy'],
+                           capture_output=True, text=True, timeout=300)
+            import resprpy
+            print(f'        resprpy {resprpy.__version__} 安装完成')
+        except Exception as e:
+            print(f'  [P] resprpy 安装失败: {e}')
+            print('      手动安装: pip install resprpy')
+            print('─' * 40)
+            return
+
+    print('────────────────────────────────────────')
+
+    # R 环境不需要，若已安装也提示一下未使用
+    print('  [R] 使用 Python 引擎 — 跳过 R 环境初始化')
+
+
 def _setup_renv():
     """初始化 R 虚拟环境 (renv) — 首次自动安装。"""
     import subprocess
@@ -116,7 +151,7 @@ def main():
         from PyQt5.QtCore import QT_VERSION_STR
         pkgs.append(f'PyQt5 {QT_VERSION_STR}')
     except Exception: pass
-    for name in ['pyqtgraph', 'numpy', 'openpyxl']:
+    for name in ['pyqtgraph', 'numpy', 'openpyxl'] + (['resprpy'] if _engine_is_python() else []):
         try:
             mod = __import__(name)
             pkgs.append(f'{name} {mod.__version__}')
@@ -124,8 +159,11 @@ def main():
     if pkgs:
         print(f'        关键包: {", ".join(pkgs)}')
 
-    # ── [2/3] R 环境 ──
-    _setup_renv()
+    # ── [2/3] 计算引擎依赖 ──
+    if _engine_is_python():
+        _setup_pyengine()
+    else:
+        _setup_renv()
 
     # ── [3/3] 启动界面 ──
     print()

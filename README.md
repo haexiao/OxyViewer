@@ -7,16 +7,28 @@
 ### 环境要求
 
 - **Python 3.10+**（必须）
-- **R 4.4+**（可选，仅 RMR 计算需要）
+- **R 4.4+**（可选 —— 只有选择 R 计算引擎时才需要）
 
 ### 首次使用
 
-**双击 `run.bat`** 即可，首次运行会自动：
-1. 创建 Python 虚拟环境 (`venv/`)
-2. 安装 Python 依赖 (`pyqtgraph`, `numpy`, `openpyxl`)
-3. 检测 R 环境，若存在则自动安装 R 包到 `renv/` 虚拟环境
+**双击 `run.bat`** 即可，启动时会让你选择耗氧率计算引擎：
 
-无 R 环境时，查看、调参、导出功能完全正常，仅「数据计算」按钮不可用。
+```
+[1] R      （respR + renv） 传统引擎，依赖 R 环境
+[2] Python （resprpy）     新引擎，无需 R
+```
+
+跳过询问可直接带参数启动：`run.bat R` 或 `run.bat python`。
+
+选择之后 run.bat 会自动：
+
+1. 创建 Python 虚拟环境 (`venv/`)
+2. 安装 Python 依赖 (`pyqtgraph`, `numpy`, `openpyxl`, `resprpy`)
+3. **按所选引擎检查对应依赖**：
+   - **R 引擎**：检测 `Rscript`（缺失会提示），R 包装到 `renv/`
+   - **Python 引擎**：检测 `resprpy`（缺失自动安装）
+
+选 Python 引擎时完全不需要安装 R。两个引擎结果一致 —— 在 9 通道实测数据上最大相对差 `1.2e-13`（约 76% 的数值逐位相同）。
 
 ### 手动 Python 环境
 
@@ -110,8 +122,9 @@ oxyviewer/
 ├── plots.py             # pyqtgraph 渲染器（GlobalRenderer/LocalRenderer）
 ├── data_loader.py       # xlsx 读取 + 参数解析 + 循环边界计算
 ├── cycle_analyzer.py    # 线性回归斜率计算
-├── calc_rmr.R           # respR R 脚本（耗氧率批量计算）
-├── run.bat              # Windows 一键启动
+├── calc_rmr.R           # R 计算引擎（respR，耗氧率批量计算）
+├── calc_rmr.py          # Python 计算引擎（resprpy，与上者接口一致）
+├── run.bat              # Windows 一键启动（选择计算引擎）
 ├── logo.png             # 应用图标
 ├── requirements.txt     # Python 依赖
 └── README.md
