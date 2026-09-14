@@ -1,5 +1,5 @@
 ﻿@echo off
-cd /d "%~dp0"
+cd /d "%~dp0.."
 set PYTHONPATH=
 
 echo ==========================================================
@@ -20,8 +20,8 @@ del /q "venv\Lib\site-packages\OpenGL\DLLS\*vc9.dll" 2>nul
 
 echo [1/2] 打包 R 版 ...
 venv\Scripts\python.exe -m PyInstaller --onefile --windowed --name OxyViewer-R ^
-  --hidden-import numpy --collect-all numpy --collect-all pyqtgraph --collect-all resprpy ^
-  --runtime-hook engine_hook_r.py ^
+  --hidden-import numpy --hidden-import PyQt5.QtOpenGL --collect-all numpy --collect-all pyqtgraph --collect-all resprpy ^
+  --runtime-hook packaging/engine_hook_r.py ^
   --add-data "venv\Lib\site-packages\PyQt5\Qt5\plugins\platforms;PyQt5/Qt5/plugins/platforms" ^
   --add-data "calc_rmr.R;." --add-data "calc_rmr.py;." ^
   --noconfirm main.py
@@ -30,8 +30,8 @@ if errorlevel 1 goto fail
 echo.
 echo [2/2] 打包 Python 版 ...
 venv\Scripts\python.exe -m PyInstaller --onefile --windowed --name OxyViewer-Python ^
-  --hidden-import numpy --collect-all numpy --collect-all pyqtgraph --collect-all resprpy ^
-  --runtime-hook engine_hook_p.py ^
+  --hidden-import numpy --hidden-import PyQt5.QtOpenGL --collect-all numpy --collect-all pyqtgraph --collect-all resprpy ^
+  --runtime-hook packaging/engine_hook_p.py ^
   --add-data "venv\Lib\site-packages\PyQt5\Qt5\plugins\platforms;PyQt5/Qt5/plugins/platforms" ^
   --add-data "calc_rmr.R;." --add-data "calc_rmr.py;." ^
   --noconfirm main.py

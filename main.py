@@ -5,13 +5,31 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# ══ 全局 pyqtgraph 配置 — GPU 加速 (PyInstaller 打包时可能不可用) ══
+# ══ 全局 pyqtgraph 配置 — GPU 加速 ══
+# 打包版要用 GPU，必须把 GL 依赖凑齐：PyOpenGL、PyQt5.QtOpenGL，以及
+# Qt5OpenGL.dll（代码里没有静态引用，PyInstaller 容易漏掉 —— 见
+# packaging/build.bat 里的 --hidden-import）。任一项缺失时 pyqtgraph 的
+# OpenGL 渲染会「静默失败」：坐标轴正常但所有曲线都不画。所以这里逐项
+# 确认，缺了就退回 CPU 渲染，而不是给用户一张空图。
+import glob as _glob
 import pyqtgraph as pg
-_use_opengl = True
-try:
-    from OpenGL import GL
-except ImportError:
-    _use_opengl = False
+
+
+def _opengl_ready():
+    """确认 OpenGL 渲染所需依赖齐全。"""
+    try:
+        from OpenGL import GL      # noqa: F401  PyOpenGL
+        import PyQt5.QtOpenGL      # noqa: F401  Qt 的 GL 模块
+    except ImportError:
+        return False
+    if getattr(sys, 'frozen', False):
+        base = getattr(sys, '_MEIPASS', '')
+        if not _glob.glob(os.path.join(base, '**', 'Qt5OpenGL.dll'), recursive=True):
+            return False
+    return True
+
+
+_use_opengl = _opengl_ready()
 pg.setConfigOptions(antialias=True, useOpenGL=_use_opengl)
 
 # ── 修复 Qt DLL 路径 ──
@@ -227,7 +245,29 @@ def _run_frozen_engine(script, script_args):
     exec(code, {'__name__': '__main__', '__file__': script})
 
 
+def _gl_test():
+    """命令行自检：确认 OpenGL 上下文能否真正建立（打包版排查用）。"""
+    from PyQt5 import QtWidgets
+    from PyQt5.QtWidgets import QOpenGLWidget
+
+    app = QtWidgets.QApplication(sys.argv)
+    w = QOpenGLWidget()
+    w.resize(64, 64)
+    w.show()
+    app.processEvents()
+    ctx = w.context()
+    ok = bool(ctx and ctx.isValid())
+    print('pyqtgraph useOpenGL      =', _use_opengl)
+    print('QOpenGLWidget 上下文可用 =', ok)
+    if ctx:
+        fmt = ctx.format()
+        print('GL 版本 = %d.%d' % (fmt.majorVersion(), fmt.minorVersion()))
+    return 0 if ok else 1
+
+
 if __name__ == '__main__':
+    if '--gl-test' in sys.argv:
+        sys.exit(_gl_test())
     if len(sys.argv) > 1 and sys.argv[1] == '--run-py-engine':
         _run_frozen_engine(sys.argv[2], sys.argv[3:])
         sys.exit(0)
