@@ -99,7 +99,8 @@ Rscript -e "install.packages(c('respR','lubridate','readxl'))"
 ### 5. 数据计算
 
 - 选择导出路径后点击「计算当前通道」或「计算所有通道」
-- 确认对话框显示计算参数和当前使用的引擎，确认后调用 `calc_rmr.R`（R 引擎）或 `calc_rmr.py`（Python 引擎）计算耗氧率
+- 左侧「渗透系数」可选 `chamber.csv`（**留空则用内置默认值**），选择后会显示读取到的通道数
+- 确认对话框显示计算参数、当前引擎和实际使用的渗透系数文件，确认后调用 `calc_rmr.R`（R 引擎）或 `calc_rmr.py`（Python 引擎）计算耗氧率
 - 计算结果保存为 `rmr{通道号}.csv`
 
 ## 数据格式
@@ -126,6 +127,21 @@ UTF-8 BOM, 逗号分隔, 13 列：
 - `rmr_type`：`fish`（实验鱼）/ `blank`（空白对照）
 - 空白行保留不删，修改参数时按日期+类型+通道匹配
 
+模板见 `templates/meas_params.csv`，也可在 [Releases](../../releases) 页下载。
+
+### chamber.csv（渗透系数）
+
+UTF-8 BOM，两列：
+
+| 列 | 含义 |
+|------|------|
+| `chamber_ID` | 通道号（1–9） |
+| `k_values` | 该通道的渗透系数 |
+
+- 用于计算前的溶氧校正：`oxy = O2 - k × (max_O₂ - O2)`
+- **左侧面板不选择该文件时**，脚本使用内置默认值（即模板中的数值）
+- 模板见 `templates/chamber.csv`，也可在 [Releases](../../releases) 页下载
+
 ## 项目结构
 
 ```
@@ -141,7 +157,12 @@ oxyviewer/
 ├── packaging/           # 打包相关文件
 │   ├── build.bat        #   一键打包 R 版 / Python 版
 │   ├── engine_hook_r.py #   runtime hook：默认 R 引擎
-│   └── engine_hook_p.py #   runtime hook：默认 Python 引擎
+│   ├── engine_hook_p.py #   runtime hook：默认 Python 引擎
+│   ├── OxyViewer.ico    #   EXE 图标
+│   └── self_test.py     #   渲染自检脚本
+├── templates/           # 文件模板
+│   ├── meas_params.csv  #   循环参数模板
+│   └── chamber.csv      #   渗透系数模板
 ├── logo.png             # 应用图标
 ├── requirements.txt     # Python 依赖
 ├── CHANGELOG.md         # 更新日志
@@ -176,6 +197,24 @@ If you use respR in academic work, please cite:
 MIT License
 
 ## 更新日志
+
+完整记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+### v1.4.0
+- 新增「渗透系数」文件选择（`chamber.csv`）：计算时按文件读取各通道 k 值
+  - 留空则使用内置默认值，行为与之前一致
+  - R 与 Python 两个引擎都支持
+- 新增文件模板 `templates/meas_params.csv` 与 `templates/chamber.csv`（Releases 页可下载）
+
+### v1.3.2
+- 修复打包版所有曲线不显示（pyqtgraph 所需的 `PyQt5._QOpenGLFunctions_*` 未被 PyInstaller 收集）
+- 修复打包版图标缺失（EXE 图标 + 窗口图标）
+
+### v1.3.1
+- 发布拆分为 R 版 / Python 版两个独立 exe
+
+### v1.3.0
+- 双计算引擎（R / Python-resprpy），可在启动时选择
 
 ### v1.2.0
 - 数据计算模块：respR R 脚本 (calc_rmr.R)，一键计算耗氧率

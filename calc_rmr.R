@@ -2,16 +2,18 @@
 # 用于 respR 批量计算耗氧率，可从 Python 通过 Rscript 调用
 #
 # 用法:
-#   Rscript calc_rmr.R <data_folder> <params_csv> <meas_time> <channels>
+#   Rscript calc_rmr.R <data_folder> <params_csv> <meas_time> <channels> [chamber_csv]
 #
 #   参数:
-#     data_folder : 数据文件夹 (如 "I:/Rtools/20260422/20260422 20")
-#     params_csv  : 参数文件路径 (如 "I:/Rtools/20260422/raw/meas_params.csv")
+#     data_folder : 数据文件夹 (如 "X:/Rtools/20260422/20260422 20")
+#     params_csv  : 参数文件路径 (如 "X:/Rtools/20260422/raw/meas_params.csv")
 #     meas_time   : 实验日期 (如 20260422)
 #     channels    : 要计算的通道号, 逗号分隔 (如 "1,2,3" 或 "1" 或 "1-9")
+#     chamber_csv : (可选) 渗透系数表 chamber.csv (列: chamber_ID, k_values)；
+#                   省略或传空串则使用内置默认值
 #
 # 示例:
-#   Rscript calc_rmr.R "I:/Rtools/20260422/20260422 20" "I:/Rtools/20260422/raw/meas_params.csv" 20260422 "1-9"
+#   Rscript calc_rmr.R "X:/Rtools/20260422/20260422 20" "X:/Rtools/20260422/raw/meas_params.csv" 20260422 "1-9" "X:/Rtools/20260422/raw/chamber.csv"
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 4) {
@@ -35,6 +37,7 @@ data_folder <- args[1]
 params_file <- args[2]
 meas_time    <- as.integer(args[3])
 ch_str       <- args[4]
+k_file       <- if (length(args) >= 5) args[5] else ""
 
 # 解析通道列表 (支持 "1,3,5" 或 "2-9" 或 "1")
 if (grepl("-", ch_str)) {
@@ -50,6 +53,28 @@ colnames(k) <- c("channel", "k_value")
 k[, "channel"] <- 1:9
 k[, "k_value"] <- c(0.0006223, 0.000317161, 0.001055724, 0.000671915,
                     0.000537423, 0.001256691, 0.000743536, 0.000743536, 0.000743536)
+
+# 提供了渗透系数文件 (chamber.csv: chamber_ID,k_values) 时覆盖内置默认值
+if (nzchar(k_file)) {
+  if (!file.exists(k_file)) {
+    stop("渗透系数文件未找到: ", k_file)
+  }
+  kdf <- read.csv(k_file, fileEncoding = "UTF-8-BOM", stringsAsFactors = FALSE)
+  cid_col <- if ("chamber_ID" %in% names(kdf)) "chamber_ID" else "channel"
+  kv_col  <- if ("k_values"   %in% names(kdf)) "k_values"  else "k_value"
+  n_ok <- 0
+  for (i in seq_len(nrow(kdf))) {
+    ch_i <- suppressWarnings(as.integer(kdf[[cid_col]][i]))
+    kv_i <- suppressWarnings(as.numeric(kdf[[kv_col]][i]))
+    if (!is.na(ch_i) && !is.na(kv_i) && ch_i >= 1 && ch_i <= nrow(k)) {
+      k[ch_i, "k_value"] <- kv_i
+      n_ok <- n_ok + 1
+    }
+  }
+  message("  渗透系数: ", basename(k_file), " (", n_ok, " 个通道)")
+} else {
+  message("  渗透系数: 内置默认值")
+}
 
 # ── 读取循环参数 ──
 if (!file.exists(params_file)) {

@@ -1,0 +1,5 @@
+﻿meas_time,meas_type,rmr_type,chamber_ID,meas_batch,temperature,cycles,initial,cycle_length,cycle_start,cycle_time,flush_time,all_time
+20260422,before,fish,"2,3,4,5,6,7,8,9",1,20,81,0,600,120,360,240,48540
+20260422,before,blank,1,1,20,20,0,2400,780,2160,240,48540
+20260505,rmr,fish,"2,3,4,5,6,7,8,9",1,5,36,0,2400,600,2160,240,86400
+20260505,rmr,blank,1,1,5,9,0,9600,1020,9360,240,86400

@@ -51,6 +51,29 @@ SUMMARY_COLS = ["rank", "intercept_b0", "slope_b1", "rsq", "row", "endrow",
                 "time", "endtime", "oxy", "endoxy", "rate.2pt", "rate"]
 
 
+def load_k_values(path):
+    """读取渗透系数表（chamber.csv: chamber_ID,k_values）。
+
+    返回 {channel: k} 字典；未提供、文件不存在或没有可用行时返回 None，
+    调用方据此回退到内置默认值 K_VALUES。
+    """
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.DictReader(f))
+        ks = {}
+        for r in rows:
+            cid = str(r.get("chamber_ID") or r.get("channel") or "").strip()
+            kv = str(r.get("k_values") or r.get("k_value") or "").strip()
+            if cid and kv:
+                ks[int(float(cid))] = float(kv)
+        return ks or None
+    except Exception as e:                       # noqa: BLE001
+        msg(f"  警告: 渗透系数文件读取失败 ({e})，改用内置默认值")
+        return None
+
+
 def msg(*args):
     """对应 R 的 message()：输出到 stderr。"""
     print(*args, file=sys.stderr, flush=True)
@@ -159,7 +182,7 @@ def write_r_csv(path, cols, col_values):
             f.write(",".join(row) + "\r\n")
 
 
-def run_channel(ch, params, data_folder):
+def run_channel(ch, params, data_folder, k_map=None):
     """处理单个通道：匹配参数 -> 读数据 -> 校正 -> 计算 -> 导出。"""
     # ── 匹配 meas_time + chamber_ID 的参数行 ──
     mode_row = None
@@ -207,7 +230,7 @@ def run_channel(ch, params, data_folder):
     valid = o2[~np.isnan(o2)]
     top = np.sort(valid)[::-1][:min(30, valid.size)]
     max_oxy = float(np.mean(top))
-    k_value = K_VALUES[ch]
+    k_value = (k_map or {}).get(ch, K_VALUES[ch])
     oxy = o2 - k_value * (max_oxy - o2)
 
     # data 4 列: Date, Oxygen, time, oxy  ->  inspect(time=3, oxygen=4)
@@ -235,15 +258,22 @@ def main(argv):
         return 2
 
     data_folder, params_file, meas_time_str, ch_str = argv[1:5]
+    k_file = argv[5] if len(argv) > 5 else ""        # 可选：渗透系数表
     MEAS_TIME = int(meas_time_str)
 
     if not os.path.exists(params_file):
         msg(f"循环参数文件未找到: {params_file}")
         return 1
 
+    k_map = load_k_values(k_file)
+    if k_map:
+        msg(f"  渗透系数: 读取 {os.path.basename(k_file)} ({len(k_map)} 个通道)")
+    else:
+        msg("  渗透系数: 使用内置默认值")
+
     params = read_params(params_file)
     for ch in parse_channels(ch_str):
-        run_channel(ch, params, data_folder)
+        run_channel(ch, params, data_folder, k_map)
     return 0
 
 

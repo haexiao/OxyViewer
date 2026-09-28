@@ -197,6 +197,31 @@ class OxyViewer(QtWidgets.QMainWindow):
         _sep()
 
         # ════════════════════════════════════════════════
+        # 渗透系数
+        # ════════════════════════════════════════════════
+        _section('渗透系数')
+        row_k = QtWidgets.QHBoxLayout()
+        self._k_file_edit = QtWidgets.QLineEdit()
+        self._k_file_edit.setPlaceholderText('chamber.csv')
+        btn_k = QtWidgets.QPushButton('浏览')
+        btn_k.setFixedWidth(48)
+        btn_k.clicked.connect(self._browse_kfile)
+        btn_k_open = QtWidgets.QPushButton('打开')
+        btn_k_open.setFixedWidth(48)
+        btn_k_open.clicked.connect(self._open_kfile_folder)
+        row_k.addWidget(self._k_file_edit)
+        row_k.addWidget(btn_k)
+        row_k.addWidget(btn_k_open)
+        vbox.addLayout(row_k)
+
+        self._k_status = QtWidgets.QLabel('未选择时使用内置默认值')
+        self._k_status.setStyleSheet(
+            'font-size: 8pt; color: #888; padding-left: 2px;')
+        vbox.addWidget(self._k_status)
+
+        _sep()
+
+        # ════════════════════════════════════════════════
         # 加载数据
         # ════════════════════════════════════════════════
         self._load_btn = QtWidgets.QPushButton('加载数据')
@@ -489,6 +514,18 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._params_file_edit.setText(saved_params)
             if os.path.isfile(saved_params):
                 self._load_params_file(saved_params)
+
+        # 渗透系数文件（未设置时保持为空 = 使用内置默认值）
+        self._k_file_edit.returnPressed.connect(self._on_kfile_changed)
+        saved_k = self._settings.value('k_file', '')
+        if saved_k:
+            self._k_file_edit.setText(saved_k)
+            if os.path.isfile(saved_k):
+                self._load_kfile(saved_k)
+            else:
+                self._k_status.setText('上次的渗透系数文件已不存在')
+                self._k_status.setStyleSheet(
+                    'font-size: 8pt; color: #e74c3c; padding-left: 2px;')
 
     # ════════════════════════════════════════════════════
     #  通道行构建
@@ -870,6 +907,67 @@ class OxyViewer(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.warning(self, '提示', '文件夹不存在。')
         else:
             QtWidgets.QMessageBox.warning(self, '提示', '请先选择参数文件。')
+
+    # ══════════ 渗透系数文件 ══════════
+
+    def _browse_kfile(self):
+        start = self._k_file_edit.text() or self._settings.value('k_file', '')
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, '选择渗透系数文件', start,
+            'CSV (*.csv);;All (*.*)')
+        if path:
+            self._k_file_edit.setText(path)
+            self._settings.setValue('k_file', path)
+            self._load_kfile(path)
+
+    def _open_kfile_folder(self):
+        path = self._k_file_edit.text().strip()
+        if path:
+            folder = os.path.dirname(path)
+            if os.path.isdir(folder):
+                os.startfile(folder)
+            else:
+                QtWidgets.QMessageBox.warning(self, '提示', '文件夹不存在。')
+        else:
+            QtWidgets.QMessageBox.warning(self, '提示', '请先选择渗透系数文件。')
+
+    def _load_kfile(self, path):
+        """校验并显示渗透系数表（chamber.csv: chamber_ID,k_values）。
+
+        实际计算时由 calc_rmr.R / calc_rmr.py 读取该文件，这里只做校验和提示。
+        """
+        import csv as _csv
+        try:
+            with open(path, encoding='utf-8-sig', newline='') as f:
+                rows = list(_csv.DictReader(f))
+            ks = {}
+            for r in rows:
+                cid = str(r.get('chamber_ID') or r.get('channel') or '').strip()
+                kv = str(r.get('k_values') or r.get('k_value') or '').strip()
+                if cid and kv:
+                    ks[int(float(cid))] = float(kv)
+        except Exception as e:
+            self._k_status.setText(f'读取失败：{e}')
+            self._k_status.setStyleSheet(
+                'font-size: 8pt; color: #e74c3c; padding-left: 2px;')
+            return
+        if ks:
+            self._k_status.setText(
+                f'已加载 {len(ks)} 个通道（{min(ks)}–{max(ks)}）')
+            self._k_status.setStyleSheet(
+                'font-size: 8pt; color: #4caf50; padding-left: 2px;')
+        else:
+            self._k_status.setText('文件为空或列名不符（应为 chamber_ID,k_values）')
+            self._k_status.setStyleSheet(
+                'font-size: 8pt; color: #e74c3c; padding-left: 2px;')
+
+    def _on_kfile_changed(self):
+        path = self._k_file_edit.text().strip()
+        if not path:
+            return
+        self._settings.setValue('k_file', path)
+        if os.path.isfile(path):
+            self._load_kfile(path)
 
     def _on_params_changed(self):
         if self._data is None:
@@ -1412,6 +1510,14 @@ class OxyViewer(QtWidgets.QMainWindow):
         py_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calc_rmr.py')
         date_str = self._date_edit.text() or os.path.basename(data_folder)[:8]
         ch_str = ','.join(str(c) for c in channels)
+        # 渗透系数文件（留空 = 由脚本使用内置默认 k 值）
+        k_file = self._k_file_edit.text().strip()
+        if k_file and not os.path.isfile(k_file):
+            QtWidgets.QMessageBox.warning(
+                self, '警告',
+                f'渗透系数文件不存在：\n{k_file}\n\n'
+                f'请重新选择，或清空该项以使用内置默认值。')
+            return
         # ── 计算引擎：环境变量 OXY_ENGINE = R(默认) | python ──
         engine = os.environ.get('OXY_ENGINE', 'R').strip().lower()
         use_py = engine in ('python', 'py', 'p', 'resprpy')
@@ -1420,6 +1526,7 @@ class OxyViewer(QtWidgets.QMainWindow):
             f'即将调用 {engine_name} 计算:',
             f'  数据文件夹: {data_folder}',
             f'  参数文件:   {params_csv}',
+            f'  渗透系数:   {k_file or "（内置默认值）"}',
             f'  实验日期:   {date_str}',
             f'  通道:       {ch_str}',
             f'  导出到:     {export_folder}',
@@ -1455,7 +1562,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._rmr_process.readyReadStandardError.connect(self._on_rmr_output)
 
         if use_py:
-            py_args = [py_script, data_folder, params_csv, date_str, ch_str]
+            py_args = [py_script, data_folder, params_csv, date_str, ch_str, k_file]
             if getattr(sys, 'frozen', False):
                 # 打包版：sys.executable 是 OxyViewer.exe，用其内嵌入口执行脚本
                 self._rmr_process.start(sys.executable, ['--run-py-engine'] + py_args)
@@ -1463,7 +1570,7 @@ class OxyViewer(QtWidgets.QMainWindow):
                 self._rmr_process.start(sys.executable, py_args)
         else:
             self._rmr_process.start('Rscript',
-                [r_script, data_folder, params_csv, date_str, ch_str])
+                [r_script, data_folder, params_csv, date_str, ch_str, k_file])
 
     def _on_rmr_output(self):
         data = bytes(self._rmr_process.readAllStandardError()).decode('utf-8', errors='replace')
