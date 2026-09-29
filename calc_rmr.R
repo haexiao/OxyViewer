@@ -48,6 +48,9 @@ if (grepl("-", ch_str)) {
 }
 
 # ── 渗透系数矩阵 ──
+# 内置默认值：仅在未提供 chamber.csv 时使用。
+# 必须与 calc_rmr.py 的 K_VALUES、templates/chamber.csv 一致，
+# 改完跑 packaging/check_defaults.py 校验。
 k <- matrix(data = NA, nrow = 9, ncol = 2)
 colnames(k) <- c("channel", "k_value")
 k[, "channel"] <- 1:9

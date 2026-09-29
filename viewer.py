@@ -6,10 +6,16 @@ import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets, QtGui
 
 from data_loader import load_xlsx, load_params, compute_cycle_boundaries
+import engine as engine_mod
 from cycle_analyzer import compute_slope
 from plots import GlobalRenderer, LocalRenderer, find_nearest
 
 # ── 样式 ──────────────────────────────────────────────
+# 状态提示标签样式（统一维护，避免各处字面量不一致）
+ST_OK   = 'font-size: 8pt; color: #4caf50; padding-left: 2px;'
+ST_ERR  = 'font-size: 8pt; color: #e74c3c; padding-left: 2px;'
+ST_HINT = 'font-size: 8pt; color: #888; padding-left: 2px;'
+
 STYLE = """
 QMainWindow { background: #f5f5f5; }
 QGroupBox { font-weight: bold; margin-top: 8px; }
@@ -202,7 +208,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         self._params_status = QtWidgets.QLabel('')
         self._params_status.setStyleSheet(
-            'font-size: 8pt; color: #4caf50; padding-left: 2px;')
+            ST_OK)
         vbox.addWidget(self._params_status)
 
         # ── 渗透系数文件 ──
@@ -223,7 +229,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         self._k_status = QtWidgets.QLabel('未选择时使用内置默认值')
         self._k_status.setStyleSheet(
-            'font-size: 8pt; color: #888; padding-left: 2px;')
+            ST_HINT)
         vbox.addWidget(self._k_status)
 
         _sep()
@@ -273,7 +279,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         row_fn.addStretch()
         _rmr_cl.addLayout(row_fn)
         lbl = QtWidgets.QLabel('格式: rmr{通道号}.csv (如 rmr1.csv)')
-        lbl.setStyleSheet('font-size: 8pt; color: #888; padding-left: 2px;')
+        lbl.setStyleSheet(ST_HINT)
         _rmr_cl.addWidget(lbl)
 
         # 导出文件夹
@@ -330,7 +336,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         # 状态
         self._rmr_status = QtWidgets.QLabel('')
-        self._rmr_status.setStyleSheet('font-size: 8pt; color: #4caf50; padding-left: 2px;')
+        self._rmr_status.setStyleSheet(ST_OK)
         _rmr_cl.addWidget(self._rmr_status)
 
         _sep()
@@ -413,7 +419,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         _cp_cl.addWidget(self._save_btn)
 
         self._save_warn = QtWidgets.QLabel('保存前务必备份原参数！')
-        self._save_warn.setStyleSheet('font-size: 8pt; color: #e74c3c; padding-left: 2px;')
+        self._save_warn.setStyleSheet(ST_ERR)
         _cp_cl.addWidget(self._save_warn)
 
         _sep()
@@ -532,7 +538,7 @@ class OxyViewer(QtWidgets.QMainWindow):
             else:
                 self._k_status.setText('上次的渗透系数文件已不存在')
                 self._k_status.setStyleSheet(
-                    'font-size: 8pt; color: #e74c3c; padding-left: 2px;')
+                    ST_ERR)
 
     # ════════════════════════════════════════════════════
     #  通道行构建
@@ -563,7 +569,7 @@ class OxyViewer(QtWidgets.QMainWindow):
             btn.setFixedSize(28, 22)
             btn.setCheckable(True)
             btn.setChecked(ch == self._active_channel)
-            btn.clicked.connect(lambda checked, c=ch: self._on_channel_button_clicked(c))
+            btn.clicked.connect(lambda _checked, c=ch: self._on_channel_button_clicked(c))
             self._channel_buttons[ch] = btn
             hbox.addWidget(btn)
 
@@ -579,9 +585,9 @@ class OxyViewer(QtWidgets.QMainWindow):
             ctype = self._channel_types.get(ch, 'fish')
             {'fish': rb_f, 'blank': rb_b, 'special': rb_s}[ctype].setChecked(True)
             # 信号
-            rb_f.toggled.connect(lambda checked, c=ch: self._on_ch_type_changed(c, 'fish'))
-            rb_b.toggled.connect(lambda checked, c=ch: self._on_ch_type_changed(c, 'blank'))
-            rb_s.toggled.connect(lambda checked, c=ch: self._on_ch_type_changed(c, 'special'))
+            rb_f.toggled.connect(lambda _checked, c=ch: self._on_ch_type_changed(c, 'fish'))
+            rb_b.toggled.connect(lambda _checked, c=ch: self._on_ch_type_changed(c, 'blank'))
+            rb_s.toggled.connect(lambda _checked, c=ch: self._on_ch_type_changed(c, 'special'))
 
             hbox.addWidget(rb_f)
             hbox.addWidget(rb_b)
@@ -606,7 +612,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
     def _update_channel_button_styles(self):
         """更新通道按钮样式：选中蓝色，未选中浅灰。"""
-        for ch, btn in self._channel_buttons.items():
+        for _ch, btn in self._channel_buttons.items():
             if btn.isChecked():
                 btn.setStyleSheet(
                     'font-weight: bold; font-size: 9pt; '
@@ -755,7 +761,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         self._params_status.setText('通道设置已保存！')
         QtWidgets.QMessageBox.information(self, '成功', '通道设置已保存到参数文件。')
-        print(f'  [UI] 通道设置已保存')
+        print('  [UI] 通道设置已保存')
 
     def _detect_channels(self, folder):
         """扫描文件夹, 返回存在的通道号列表。"""
@@ -956,17 +962,17 @@ class OxyViewer(QtWidgets.QMainWindow):
         except Exception as e:
             self._k_status.setText(f'读取失败：{e}')
             self._k_status.setStyleSheet(
-                'font-size: 8pt; color: #e74c3c; padding-left: 2px;')
+                ST_ERR)
             return
         if ks:
             self._k_status.setText(
                 f'已加载 {len(ks)} 个通道（{min(ks)}–{max(ks)}）')
             self._k_status.setStyleSheet(
-                'font-size: 8pt; color: #4caf50; padding-left: 2px;')
+                ST_OK)
         else:
             self._k_status.setText('文件为空或列名不符（应为 chamber_ID,k_values）')
             self._k_status.setStyleSheet(
-                'font-size: 8pt; color: #e74c3c; padding-left: 2px;')
+                ST_ERR)
 
     def _on_kfile_changed(self):
         path = self._k_file_edit.text().strip()
@@ -1249,7 +1255,7 @@ class OxyViewer(QtWidgets.QMainWindow):
             if row.get('rmr_type', '').strip() != csv_rmr:
                 continue
             row_ch = row.get('chamber_ID', '').strip().replace('"', '')
-            row_chs = set(int(x.strip()) for x in row_ch.split(',') if x.strip())
+            row_chs = {int(x.strip()) for x in row_ch.split(',') if x.strip()}
             if ch not in row_chs:
                 continue
             row['cycles'] = self._p_cycles.text()
@@ -1282,7 +1288,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         self._params_status.setText('参数已保存！')
         QtWidgets.QMessageBox.information(self, '成功', '循环参数已保存到文件。')
-        print(f'  [UI] 循环参数已保存')
+        print('  [UI] 循环参数已保存')
 
     # ════════════════════════════════════════════════════
     #  绘图
@@ -1428,7 +1434,6 @@ class OxyViewer(QtWidgets.QMainWindow):
         if idx is None:
             return
 
-        ts = self._data['timestamps'][idx]
         oxy = self._data['oxygen'][idx]
         tmp = self._data['temperature'][idx]
         prs = self._data['pressure'][idx]
@@ -1526,9 +1531,8 @@ class OxyViewer(QtWidgets.QMainWindow):
                 f'请重新选择，或清空该项以使用内置默认值。')
             return
         # ── 计算引擎：环境变量 OXY_ENGINE = R(默认) | python ──
-        engine = os.environ.get('OXY_ENGINE', 'R').strip().lower()
-        use_py = engine in ('python', 'py', 'p', 'resprpy')
-        engine_name = 'Python (resprpy)' if use_py else 'R'
+        use_py = engine_mod.is_python_engine()
+        engine_name = engine_mod.engine_label()
         msg_parts = [
             f'即将调用 {engine_name} 计算:',
             f'  数据文件夹: {data_folder}',
@@ -1548,7 +1552,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         print(f'  [UI] 开始 {engine_name} 计算: 通道 {ch_str}')
         self._rmr_success_msg = success_msg
         self._rmr_engine_name = engine_name
-        self._rmr_engine_tag = 'PY' if use_py else 'R'
+        self._rmr_engine_tag = engine_mod.engine_tag()
         self._rmr_progress.setVisible(True)
         self._rmr_status.setText(f'正在计算通道 {ch_str}...')
 

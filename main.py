@@ -1,9 +1,13 @@
 """OxyViewer — 溶氧数据可视化工具 · 入口 (PyQt5 + pyqtgraph, OpenGL)"""
+import contextlib
 import sys
 import os
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# 计算引擎判定（与 viewer.py 共用同一份逻辑）
+import engine
 
 # ══ 全局 pyqtgraph 配置 — GPU 加速 ══
 # 打包版要用 GPU，必须把 GL 依赖凑齐：PyOpenGL、PyQt5.QtOpenGL，以及
@@ -44,10 +48,8 @@ import PyQt5
 _qt_dir = os.path.dirname(PyQt5.__file__)
 _qt_bin = os.path.join(_qt_dir, 'Qt5', 'bin')
 if os.path.isdir(_qt_bin):
-    try:
+    with contextlib.suppress(AttributeError):
         os.add_dll_directory(_qt_bin)
-    except AttributeError:
-        pass
 _qt_plugins = os.path.join(_qt_dir, 'Qt5', 'plugins')
 os.environ['QT_PLUGIN_PATH'] = _qt_plugins
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.join(_qt_plugins, 'platforms')
@@ -81,8 +83,7 @@ def _resolve_engine():
 
 def _engine_is_python():
     """当前选择的是否为 Python (resprpy) 计算引擎。"""
-    eng = os.environ.get('OXY_ENGINE', 'R').strip().lower()
-    return eng in ('python', 'py', 'p', 'resprpy')
+    return engine.is_python_engine()
 
 
 def _setup_pyengine():
@@ -142,8 +143,8 @@ def _setup_renv():
         return
 
     print(f'        R {r_ver_short} — 首次运行，安装 R 包...')
-    print(f'        CRAN 镜像: mirrors.tuna.tsinghua.edu.cn/CRAN')
-    print(f'        预计下载 ~30 MB\n')
+    print('        CRAN 镜像: mirrors.tuna.tsinghua.edu.cn/CRAN')
+    print('        预计下载 ~30 MB\n')
 
     # 分步安装以显示进度
     steps = [
@@ -160,7 +161,7 @@ def _setup_renv():
                 ['Rscript', '-e',
                  f'options(repos=c(CRAN="https://mirrors.tuna.tsinghua.edu.cn/CRAN"));{cmd}'],
                 cwd=project_dir, check=True)
-        except subprocess.CalledProcessError as e:
+        except subprocess.CalledProcessError:
             print(f'  [!] {label} 失败')
             break
 
@@ -224,7 +225,7 @@ def main():
         app = QtWidgets.QApplication(sys.argv)
         app.setStyle('Fusion')
         print('        Qt 初始化完成')
-    except Exception as e:
+    except Exception:
         show_error('Qt 初始化失败', traceback.format_exc())
         return 1
 
@@ -234,7 +235,7 @@ def main():
         window.show()
         print('        主窗口已启动\n')
         return app.exec_()
-    except Exception as e:
+    except Exception:
         show_error('启动失败', traceback.format_exc())
         return 1
 

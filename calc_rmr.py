@@ -33,7 +33,10 @@ import openpyxl
 
 import resprpy as rp
 
-# ── 渗透系数（与 calc_rmr.R 完全一致）──────────────────────────────
+# ── 渗透系数 ──
+# 内置默认值：仅在未提供 chamber.csv 时使用（保证脚本可独立运行、
+# 也不破坏「不选文件」的旧用法）。必须与 calc_rmr.R 的 k 矩阵、
+# templates/chamber.csv 保持一致，改完跑 packaging/check_defaults.py 校验。
 K_VALUES = {
     1: 0.0006223,
     2: 0.000317161,
