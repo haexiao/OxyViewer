@@ -92,6 +92,14 @@ class OxyViewer(QtWidgets.QMainWindow):
                 'border-bottom: 1px solid #ccc; padding-bottom: 2px; margin-top: 6px;')
             vbox.addWidget(lbl)
 
+        def _sub(title):
+            """二级条目标签：比 _section 轻（不加粗、无下边框）。"""
+            lbl = QtWidgets.QLabel(title)
+            lbl.setStyleSheet(
+                'font-size: 9pt; color: #444; '
+                'padding-left: 2px; margin-top: 3px;')
+            vbox.addWidget(lbl)
+
         def _sep():
             line = QtWidgets.QFrame()
             line.setFrameShape(QtWidgets.QFrame.HLine)
@@ -172,9 +180,12 @@ class OxyViewer(QtWidgets.QMainWindow):
         _sep()
 
         # ════════════════════════════════════════════════
-        # 参数文件
+        # 参数文件（含二级条目：循环参数文件 / 渗透系数文件）
         # ════════════════════════════════════════════════
-        _section('循环参数文件')
+        _section('参数文件')
+
+        # ── 循环参数文件 ──
+        _sub('循环参数文件')
         row2 = QtWidgets.QHBoxLayout()
         self._params_file_edit = QtWidgets.QLineEdit()
         self._params_file_edit.setPlaceholderText('meas_params.csv')
@@ -194,12 +205,8 @@ class OxyViewer(QtWidgets.QMainWindow):
             'font-size: 8pt; color: #4caf50; padding-left: 2px;')
         vbox.addWidget(self._params_status)
 
-        _sep()
-
-        # ════════════════════════════════════════════════
-        # 渗透系数
-        # ════════════════════════════════════════════════
-        _section('渗透系数文件')
+        # ── 渗透系数文件 ──
+        _sub('渗透系数文件')
         row_k = QtWidgets.QHBoxLayout()
         self._k_file_edit = QtWidgets.QLineEdit()
         self._k_file_edit.setPlaceholderText('chamber.csv')
