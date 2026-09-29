@@ -174,7 +174,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         # ════════════════════════════════════════════════
         # 参数文件
         # ════════════════════════════════════════════════
-        _section('参数文件')
+        _section('循环参数文件')
         row2 = QtWidgets.QHBoxLayout()
         self._params_file_edit = QtWidgets.QLineEdit()
         self._params_file_edit.setPlaceholderText('meas_params.csv')
@@ -199,7 +199,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         # ════════════════════════════════════════════════
         # 渗透系数
         # ════════════════════════════════════════════════
-        _section('渗透系数')
+        _section('渗透系数文件')
         row_k = QtWidgets.QHBoxLayout()
         self._k_file_edit = QtWidgets.QLineEdit()
         self._k_file_edit.setPlaceholderText('chamber.csv')
@@ -906,7 +906,7 @@ class OxyViewer(QtWidgets.QMainWindow):
             else:
                 QtWidgets.QMessageBox.warning(self, '提示', '文件夹不存在。')
         else:
-            QtWidgets.QMessageBox.warning(self, '提示', '请先选择参数文件。')
+            QtWidgets.QMessageBox.warning(self, '提示', '请先选择循环参数文件。')
 
     # ══════════ 渗透系数文件 ══════════
 
