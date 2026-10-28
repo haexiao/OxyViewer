@@ -210,6 +210,10 @@ def read_xlsx_channel(path):
     """
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     ws = wb.worksheets[5]                      # 第 6 个 sheet（1-based 6）
+    # 与 data_loader.load_xlsx 同理：部分文件的 <dimension> 元数据是错的
+    # （实际有上万行却声明成 A1），read_only 模式据此只读到第一行。
+    # 清掉 dimension 让 openpyxl 按实际内容扫描整张表。
+    ws.reset_dimensions()
     dates, oxy = [], []
     for row in ws.iter_rows(min_row=2, values_only=True):  # 跳过表头
         dates.append(row[1])                   # 第 2 列
