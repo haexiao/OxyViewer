@@ -278,6 +278,11 @@ MIT License
   - R 与 Python 两个引擎都支持
 - 新增文件模板 `templates/meas_params.csv` 与 `templates/chamber.csv`（Releases 页可下载）
 
+### v1.5.0
+- 新增**排除循环**：可指定某通道的若干循环不参与耗氧率计算（详见 [CHANGELOG.md](CHANGELOG.md)）
+- 修复部分 xlsx 无法加载（`<dimension>` 元数据错误、时间列存为文本）
+- 修复软件图标不显示（应用级图标 + Windows 任务栏 AppUserModelID）
+
 ### v1.3.2
 - 修复打包版所有曲线不显示（pyqtgraph 所需的 `PyQt5._QOpenGLFunctions_*` 未被 PyInstaller 收集）
 - 修复打包版图标缺失（EXE 图标 + 窗口图标）
