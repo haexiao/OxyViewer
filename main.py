@@ -224,6 +224,24 @@ def main():
         from PyQt5 import QtWidgets
         app = QtWidgets.QApplication(sys.argv)
         app.setStyle('Fusion')
+
+        # 应用级图标：窗口标题栏与任务栏都取它。
+        # 打包后 __file__ 指向解包目录，logo.png 由 build.bat 的 --add-data 打入。
+        _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logo.png')
+        if os.path.isfile(_icon_path):
+            from PyQt5 import QtGui
+            app.setWindowIcon(QtGui.QIcon(_icon_path))
+
+        # Windows 任务栏图标取决于进程的 AppUserModelID；不显式设置时，
+        # 打包程序的窗口有时会沿用 python.exe 的图标而不是自己的。
+        if sys.platform == 'win32':
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    'haexiao.OxyViewer')
+            except Exception:
+                pass
+
         print('        Qt 初始化完成')
     except Exception:
         show_error('Qt 初始化失败', traceback.format_exc())
