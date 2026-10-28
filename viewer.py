@@ -1,11 +1,14 @@
 """OxyViewer — 溶氧数据可视化工具 · 主窗口 (PyQt5 + pyqtgraph)"""
+import bisect
 import os
 import re
 import sys
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets, QtGui
 
-from data_loader import load_xlsx, load_params, compute_cycle_boundaries
+from data_loader import (load_xlsx, load_params, compute_cycle_boundaries,
+                         load_exclude, parse_cycle_spec, format_cycle_spec,
+                         generate_exclude_csv, EXCLUDE_COLUMN, EXCLUDE_FIELDS)
 import engine as engine_mod
 from cycle_analyzer import compute_slope
 from plots import GlobalRenderer, LocalRenderer, find_nearest
@@ -46,6 +49,10 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._channel_enabled = {}        # {channel_num: bool}
         self._channel_buttons = {}        # {channel_num: QPushButton}
         self._channel_rows = {}           # {channel_num: QWidget}
+        # 排除循环
+        self._exclude_rows = None         # 排除参数文件内容 (list[dict])
+        self._exclude_cycles = {}         # {channel_num: set[int]} 被排除的循环号
+        self._exclude_edits = {}          # {channel_num: QLineEdit}
 
         self._build_ui()
 
@@ -66,9 +73,31 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._build_left_panel(splitter)
         self._build_right_panel(splitter)
 
-        splitter.setSizes([290, 1000])
+        self._splitter = splitter
+        # 记住上次拖动的左右宽度（用户调好后不用每次重调）
+        saved_sizes = self._settings.value('splitter_sizes')
+        restored = False
+        if isinstance(saved_sizes, (list, tuple)) and len(saved_sizes) == 2:
+            try:
+                sizes = [int(v) for v in saved_sizes]
+                if all(v > 0 for v in sizes):
+                    splitter.setSizes(sizes)
+                    restored = True
+            except (TypeError, ValueError):
+                restored = False
+        if not restored:
+            splitter.setSizes([300, 1000])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
+
+    def closeEvent(self, event):
+        """退出前记住左右分栏宽度。"""
+        try:
+            self._settings.setValue('splitter_sizes', self._splitter.sizes())
+            self._settings.sync()
+        except Exception:                       # noqa: BLE001
+            pass
+        super().closeEvent(event)
 
         # 设置应用图标
         logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logo.png')
@@ -78,12 +107,14 @@ class OxyViewer(QtWidgets.QMainWindow):
     def _build_left_panel(self, parent):
         """左侧控制面板 — 新布局：数据文件夹/参数文件/加载数据/数据日期/通道设置/循环参数/图像设置"""
         panel = QtWidgets.QWidget()
-        # 宽度由 QSplitter 控制
+        # 宽度由 QSplitter 控制；给个下限，避免缩太窄把控件挤没
+        panel.setMinimumWidth(268)
 
         # 顶层用 QScrollArea 防止窗口缩小时挤压
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        # 需要时才出横向滚动条：之前强制关掉，内容比面板宽时控件会被直接裁掉
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         scroll.setStyleSheet('QScrollArea { border: none; }')
 
         inner = QtWidgets.QWidget()
@@ -232,6 +263,33 @@ class OxyViewer(QtWidgets.QMainWindow):
             ST_HINT)
         vbox.addWidget(self._k_status)
 
+        # ── 排除参数文件 ──
+        _sub('排除参数文件')
+        row_ex = QtWidgets.QHBoxLayout()
+        self._exclude_file_edit = QtWidgets.QLineEdit()
+        self._exclude_file_edit.setPlaceholderText('meas_exclude.csv')
+        self._exclude_file_edit.returnPressed.connect(self._on_exclude_path_changed)
+        btn_ex = QtWidgets.QPushButton('浏览')
+        btn_ex.setFixedWidth(48)
+        btn_ex.clicked.connect(self._browse_exclude)
+        btn_ex_open = QtWidgets.QPushButton('打开')
+        btn_ex_open.setFixedWidth(48)
+        btn_ex_open.clicked.connect(self._open_exclude_folder)
+        row_ex.addWidget(self._exclude_file_edit)
+        row_ex.addWidget(btn_ex)
+        row_ex.addWidget(btn_ex_open)
+        vbox.addLayout(row_ex)
+
+        self._exclude_status = QtWidgets.QLabel('未选择时不排除任何循环')
+        self._exclude_status.setStyleSheet(
+            ST_HINT)
+        vbox.addWidget(self._exclude_status)
+
+        self._gen_exclude_btn = QtWidgets.QPushButton('生成排除参数')
+        self._gen_exclude_btn.clicked.connect(self._generate_exclude)
+        self._gen_exclude_btn.setMinimumHeight(24)
+        vbox.addWidget(self._gen_exclude_btn)
+
         _sep()
 
         # ════════════════════════════════════════════════
@@ -252,6 +310,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._date_edit = QtWidgets.QLineEdit()
         self._date_edit.setFixedWidth(80)
         self._date_edit.setPlaceholderText('自动获取')
+        self._date_edit.editingFinished.connect(self._on_date_changed)
         row_date.addWidget(self._date_edit)
         row_date.addStretch()
         vbox.addLayout(row_date)
@@ -349,7 +408,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         row_range = QtWidgets.QHBoxLayout()
         row_range.addWidget(QtWidgets.QLabel('通道范围：'))
         self._ch_from = QtWidgets.QLineEdit('1')
-        self._ch_from.setFixedWidth(36)
+        self._ch_from.setFixedWidth(34)
         self._ch_from.returnPressed.connect(self._refresh_channel_rows)
         row_range.addWidget(self._ch_from)
         row_range.addWidget(QtWidgets.QLabel('~'))
@@ -373,6 +432,16 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._save_ch_btn.clicked.connect(self._save_channel_settings)
         self._save_ch_btn.setMinimumHeight(28)
         _ch_cl.addWidget(self._save_ch_btn)
+
+        self._save_exclude_btn = QtWidgets.QPushButton('保存到排除参数')
+        self._save_exclude_btn.clicked.connect(self._save_exclude_settings)
+        self._save_exclude_btn.setMinimumHeight(28)
+        _ch_cl.addWidget(self._save_exclude_btn)
+
+        self._exclude_hint = QtWidgets.QLabel(
+            '被排除的循环仍保留在结果中，只把代谢数据（斜率/截距/R²/速率）留空')
+        self._exclude_hint.setStyleSheet(ST_HINT)
+        _ch_cl.addWidget(self._exclude_hint)
 
         _sep()
 
@@ -511,6 +580,15 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         vbox.addStretch()
 
+        # 长提示文字改成「可换行 + 不参与最小宽度计算」：
+        # 否则一句提示会把左侧面板需要的宽度撑到 400+ px，
+        # 面板显示不全或被迫出横向滚动条（曲线区域被挤窄）。
+        for lbl in inner.findChildren(QtWidgets.QLabel):
+            if len(lbl.text()) >= 10:
+                lbl.setWordWrap(True)
+                lbl.setSizePolicy(QtWidgets.QSizePolicy.Ignored,
+                                  QtWidgets.QSizePolicy.Preferred)
+
         # 装入 QScrollArea 防止缩小时挤压
         scroll.setWidget(inner)
         panel_layout = QtWidgets.QVBoxLayout(panel)
@@ -532,13 +610,29 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._k_file_edit.returnPressed.connect(self._on_kfile_changed)
         saved_k = self._settings.value('k_file', '')
         if saved_k:
-            self._k_file_edit.setText(saved_k)
             if os.path.isfile(saved_k):
+                self._k_file_edit.setText(saved_k)
                 self._load_kfile(saved_k)
             else:
-                self._k_status.setText('上次的渗透系数文件已不存在')
-                self._k_status.setStyleSheet(
-                    ST_ERR)
+                # 上次的文件被移动/删除：清掉记录，避免每次启动都提示
+                self._settings.remove('k_file')
+                self._k_status.setText('上次的渗透系数文件已不存在，已清除该记录')
+                self._k_status.setStyleSheet(ST_HINT)
+                print(f'  [UI] 渗透系数文件已不存在，已清除记录: {saved_k}')
+
+        # 排除参数文件（未设置时不排除任何循环）
+        saved_ex = self._settings.value('exclude_file', '')
+        if saved_ex:
+            if os.path.isfile(saved_ex):
+                self._exclude_file_edit.setText(saved_ex)
+                self._load_exclude_file(saved_ex)
+            else:
+                # 上次的文件被移动/删除：清掉记录，避免每次启动都提示
+                self._settings.remove('exclude_file')
+                self._exclude_loaded_path = None
+                self._exclude_status.setText('上次的排除参数文件已不存在，已清除该记录')
+                self._exclude_status.setStyleSheet(ST_HINT)
+                print(f'  [UI] 排除参数文件已不存在，已清除记录: {saved_ex}')
 
     # ════════════════════════════════════════════════════
     #  通道行构建
@@ -551,11 +645,17 @@ class OxyViewer(QtWidgets.QMainWindow):
             w.deleteLater()
         self._channel_rows.clear()
         self._channel_buttons.clear()
+        self._exclude_edits.clear()
 
         for ch in range(ch_from, ch_to + 1):
+            wrap = QtWidgets.QWidget()
+            wvbox = QtWidgets.QVBoxLayout(wrap)
+            wvbox.setContentsMargins(2, 1, 2, 1)
+            wvbox.setSpacing(0)
+
             row = QtWidgets.QWidget()
             hbox = QtWidgets.QHBoxLayout(row)
-            hbox.setContentsMargins(2, 1, 2, 1)
+            hbox.setContentsMargins(0, 0, 0, 0)
             hbox.setSpacing(2)
 
             # 勾选框
@@ -593,22 +693,54 @@ class OxyViewer(QtWidgets.QMainWindow):
             hbox.addWidget(rb_b)
             hbox.addWidget(rb_s)
             hbox.addStretch()
+            wvbox.addWidget(row)
 
-            self._channel_rows[ch] = row
-            self._ch_list_layout.addWidget(row)
+            # ── 排除循环 (该通道不参与计算的循环号) ──
+            ex_row = QtWidgets.QHBoxLayout()
+            ex_row.setContentsMargins(0, 0, 0, 0)
+            ex_row.setSpacing(2)
+            ex_row.addSpacing(22)
+            ex_row.addWidget(QtWidgets.QLabel('排除：'))
+            ed = QtWidgets.QLineEdit()
+            ed.setPlaceholderText('如 3,6,9-14')
+            ed.setMinimumWidth(90)
+            ed.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            ed.setText(format_cycle_spec(self._exclude_cycles.get(ch, ())))
+            # 输入即刷新图像；回车/失焦时再做规范化与非法输入提示
+            ed.textChanged.connect(lambda _t, c=ch: self._on_exclude_typed(c))
+            ed.editingFinished.connect(
+                lambda c=ch: self._on_exclude_edited(c))
+            self._exclude_edits[ch] = ed
+            ex_row.addWidget(ed, 1)
+            wvbox.addLayout(ex_row)
+
+            self._channel_rows[ch] = wrap
+            self._ch_list_layout.addWidget(wrap)
 
         self._update_channel_button_styles()
 
+    def _channel_range(self):
+        """安全解析「通道范围」两个输入框，返回 (from, to)。
+
+        输入非法（空/非数字/负数）时回退到 1..9，避免后续 int() 抛异常；
+        结果保证 1 <= from <= to <= 99。
+        """
+        def _val(edit, default):
+            try:
+                return int(str(edit.text()).strip())
+            except (TypeError, ValueError):
+                return default
+        f = _val(self._ch_from, 1)
+        t = _val(self._ch_to, 9)
+        f = max(1, min(f, 99))
+        t = max(1, min(t, 99))
+        if t < f:
+            f, t = t, f
+        return f, t
+
     def _refresh_channel_rows(self):
         """通道范围变更时重建行。"""
-        try:
-            f = int(self._ch_from.text())
-            t = int(self._ch_to.text())
-            f = max(1, min(f, 99))
-            t = max(f, min(t, 99))
-        except ValueError:
-            return
-        self._rebuild_channel_rows(f, t)
+        self._rebuild_channel_rows(*self._channel_range())
 
     def _update_channel_button_styles(self):
         """更新通道按钮样式：选中蓝色，未选中浅灰。"""
@@ -681,12 +813,31 @@ class OxyViewer(QtWidgets.QMainWindow):
             rows = [dict(r) for r in reader]
 
         # ── 当前通道分类 ──
+        # 只允许「该日期 CSV 里已有的通道」∪「界面上当前显示的通道」，
+        # 否则 _channel_types 里默认 fish 的 10~19 会被写进参数文件（凭空多出通道）
+        date_channels = set()
+        for row in rows:
+            if row.get('meas_time', '').strip() != date_str:
+                continue
+            for token in str(row.get('chamber_ID', '')).replace('"', '').split(','):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    date_channels.add(int(float(token)))
+                except ValueError:
+                    continue
+        allowed = date_channels | set(self._exclude_edits.keys())
+
         fish_chs   = [c for c in sorted(self._channel_types)
-                      if self._channel_types[c] == 'fish' and self._channel_enabled.get(c, True)]
+                      if c in allowed and self._channel_types[c] == 'fish'
+                      and self._channel_enabled.get(c, True)]
         blank_chs  = [c for c in sorted(self._channel_types)
-                      if self._channel_types[c] == 'blank' and self._channel_enabled.get(c, True)]
+                      if c in allowed and self._channel_types[c] == 'blank'
+                      and self._channel_enabled.get(c, True)]
         special_chs = [c for c in sorted(self._channel_types)
-                       if self._channel_types[c] == 'special' and self._channel_enabled.get(c, True)]
+                       if c in allowed and self._channel_types[c] == 'special'
+                       and self._channel_enabled.get(c, True)]
 
         # ── 查找/分类该日期的行 ──
         fish_general_row = None
@@ -759,6 +910,12 @@ class OxyViewer(QtWidgets.QMainWindow):
             writer.writeheader()
             writer.writerows(rows)
 
+        # 写盘后重新读入，避免内存里还是旧参数（否则下次自动匹配会用旧类型/旧 chamber）
+        self._load_params_file(csv_path)
+        self._load_channel_types_from_params()
+        # 只刷新输入框，不要从排除文件重读（会冲掉尚未保存的排除输入）
+        self._fill_exclude_boxes()
+
         self._params_status.setText('通道设置已保存！')
         QtWidgets.QMessageBox.information(self, '成功', '通道设置已保存到参数文件。')
         print('  [UI] 通道设置已保存')
@@ -787,18 +944,25 @@ class OxyViewer(QtWidgets.QMainWindow):
         for p in self._params_list:
             if p['meas_time'] != date_str:
                 continue
-            chamber = str(p.get('chamber_id', '')).strip()
-            if not chamber:
+            chamber = str(p.get('chamber_id', '')).replace('"', '')
+            ids = []
+            for token in chamber.split(','):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    ids.append(int(float(token)))
+                except ValueError:
+                    continue
+            if not ids:
                 continue
-            ids = [int(x.strip()) for x in chamber.split(',') if x.strip()]
-            ctype = 'fish' if p['rmr_type'] == 'fish' else 'blank'
-            if p['rmr_type'] == 'fish' and (not ids or ids == list(range(2, 10))):
-                ctype = 'fish'
-            elif p['rmr_type'] == 'blank':
+            if p['rmr_type'] == 'blank':
                 ctype = 'blank'
-            # 判断是否是特殊 (单个仓且不是 1)
-            if p['rmr_type'] == 'fish' and len(ids) == 1 and ids[0] != 1:
+            elif len(ids) == 1 and ids[0] != 1:
+                # 单个仓的 fish 行 = 该通道有独立参数（特殊）
                 ctype = 'special'
+            else:
+                ctype = 'fish'
             for cid in ids:
                 if 1 <= cid <= 20:
                     self._channel_types[cid] = ctype
@@ -838,7 +1002,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         # ── 数据游标 ──
         self._cursor_label = QtWidgets.QLabel(
-            'Time: -- | -- s | O₂: -- | Temp: -- | Press: --')
+            'Time: -- | -- s | O₂: -- | Temp: -- | Press: -- | Cycle: --')
         self._cursor_label.setStyleSheet(
             'font-family: Consolas; font-size: 10pt; padding: 2px 6px;')
         vbox.addWidget(self._cursor_label)
@@ -978,25 +1142,315 @@ class OxyViewer(QtWidgets.QMainWindow):
         path = self._k_file_edit.text().strip()
         if not path:
             return
+        path = os.path.abspath(path)          # 统一存绝对路径，避免下次启动按不同 cwd 找不到
+        self._k_file_edit.setText(path)
         self._settings.setValue('k_file', path)
         if os.path.isfile(path):
             self._load_kfile(path)
 
+    # ══════════ 排除参数文件 ══════════
+
+    def _browse_exclude(self):
+        start = (self._exclude_file_edit.text()
+                 or self._settings.value('exclude_file', '')
+                 or os.path.dirname(self._params_file_edit.text().strip()))
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, '选择排除参数文件', start, 'CSV (*.csv);;All (*.*)')
+        if path:
+            self._exclude_file_edit.setText(path)
+            self._settings.setValue('exclude_file', path)
+            self._load_exclude_file(path)
+
+    def _open_exclude_folder(self):
+        path = self._exclude_file_edit.text().strip()
+        if path:
+            folder = os.path.dirname(path)
+            if os.path.isdir(folder):
+                os.startfile(folder)
+            else:
+                QtWidgets.QMessageBox.warning(self, '提示', '文件夹不存在。')
+        else:
+            QtWidgets.QMessageBox.warning(self, '提示', '请先选择排除参数文件。')
+
+    def _on_exclude_path_changed(self):
+        path = self._exclude_file_edit.text().strip()
+        if not path:
+            self._exclude_rows = None
+            self._exclude_cycles = {}
+            self._exclude_loaded_path = None
+            self._sync_exclude_boxes()
+            if self._data is not None and self._cycle_bounds is not None:
+                self._redraw()
+            return
+        path = os.path.abspath(path)          # 统一存绝对路径
+        self._exclude_file_edit.setText(path)
+        self._settings.setValue('exclude_file', path)
+        if os.path.isfile(path):
+            self._load_exclude_file(path)
+        else:
+            self._exclude_loaded_path = None
+            self._exclude_status.setText('文件不存在')
+            self._exclude_status.setStyleSheet(ST_ERR)
+
+    def _load_exclude_file(self, path):
+        """读取排除参数文件，校验列名，同步到各通道输入框。"""
+        import csv as _csv
+        try:
+            with open(path, 'r', encoding='utf-8-sig', newline='') as f:
+                fields = list(_csv.DictReader(f).fieldnames or [])
+        except Exception as e:
+            self._exclude_rows = None
+            self._exclude_status.setText(f'读取失败：{e}')
+            self._exclude_status.setStyleSheet(ST_ERR)
+            return
+
+        missing = [c for c in ('meas_time', 'chamber_ID', EXCLUDE_COLUMN)
+                   if c not in fields]
+        if missing:
+            self._exclude_rows = None
+            self._exclude_status.setText(f'缺少列：{", ".join(missing)}')
+            self._exclude_status.setStyleSheet(ST_ERR)
+            QtWidgets.QMessageBox.critical(
+                self, '排除参数文件格式错误',
+                f'{os.path.basename(path)} 缺少以下列:\n{", ".join(missing)}\n\n'
+                f'可点击「生成排除参数」重建该文件，或手动补上列名 '
+                f'({", ".join(EXCLUDE_FIELDS)})。')
+            return
+
+        try:
+            self._exclude_rows = load_exclude(path)
+        except Exception as e:
+            self._exclude_rows = None
+            self._exclude_status.setText(f'读取失败：{e}')
+            self._exclude_status.setStyleSheet(ST_ERR)
+            return
+
+        self._exclude_loaded_path = path
+        self._sync_exclude_boxes()
+        if self._data is not None and self._cycle_bounds is not None:
+            self._redraw()
+        print(f'  [UI] 加载排除参数: {os.path.basename(path)} '
+              f'({len(self._exclude_rows)} 行)')
+
+    def _sync_exclude_boxes(self):
+        """把排除文件内容按当前数据日期同步到 _exclude_cycles 与输入框。"""
+        self._exclude_cycles = {}
+        date_str = self._date_edit.text().strip()
+        # 没有日期时不做跨日期合并（否则会把所有日期的排除混在一起）
+        for r in (self._exclude_rows or [] if date_str else []):
+            if r['meas_time'] != date_str:
+                continue
+            for token in str(r['chamber_id']).replace('"', '').split(','):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    cid = int(float(token))
+                except ValueError:
+                    continue
+                bucket = self._exclude_cycles.setdefault(cid, set())
+                if r['exclude']:
+                    bucket.update(r['exclude'])
+        self._exclude_synced_date = date_str
+        self._fill_exclude_boxes()
+
+    def _fill_exclude_boxes(self):
+        """用内存里的 _exclude_cycles 刷新各通道输入框（不读盘）。"""
+        self._exclude_syncing = True
+        try:
+            for ch, ed in self._exclude_edits.items():
+                ed.setText(format_cycle_spec(self._exclude_cycles.get(ch, ())))
+        finally:
+            self._exclude_syncing = False
+        self._update_exclude_status()
+
+    def _on_date_changed(self):
+        """数据日期变化：按新日期重新取排除设置并刷新图像。"""
+        if self._exclude_rows:
+            self._sync_exclude_boxes()
+        if self._data is not None and self._cycle_bounds is not None:
+            self._redraw()
+
+    def _update_exclude_status(self):
+        if not self._exclude_rows:
+            self._exclude_status.setText('未选择时不排除任何循环')
+            self._exclude_status.setStyleSheet(ST_HINT)
+            return
+        n_ex = sum(1 for r in (self._exclude_rows or []) if r['exclude'])
+        self._exclude_status.setText(
+            f'已加载 {len(self._exclude_rows)} 行，{n_ex} 行有排除')
+        self._exclude_status.setStyleSheet(ST_OK)
+
+    def _on_exclude_typed(self, ch):
+        """输入过程中实时解析并刷新图像（不写回文本，避免打断输入）。"""
+        if getattr(self, '_exclude_syncing', False):
+            return
+        ed = self._exclude_edits.get(ch)
+        if ed is None:
+            return
+        text = ed.text().strip()
+        cycles = parse_cycle_spec(text)
+        if text and not cycles:
+            return          # 可能是输入到一半（如 "9-"），保持原状态
+        if self._exclude_cycles.get(ch, set()) == set(cycles):
+            return
+        self._exclude_cycles[ch] = set(cycles)
+        self._update_exclude_status()
+        self._apply_exclusion_to_plot(ch)
+
+    def _apply_exclusion_to_plot(self, ch):
+        """属性级更新被排除循环的灰色标记（不重建整个视图）。"""
+        if ch != self._active_channel:
+            return
+        if self._data is None or self._cycle_bounds is None:
+            return
+        excluded = set(self._exclude_cycles.get(ch, ()))
+        self._global_renderer.set_excluded(excluded)
+        self._local_renderer.set_excluded(self._current_cycle in excluded)
+        self._update_slope_info()
+
+    def _on_exclude_edited(self, ch):
+        """排除输入框编辑完成：规范化文本，非法输入给出明确提示。"""
+        ed = self._exclude_edits.get(ch)
+        if ed is None or getattr(self, '_exclude_syncing', False):
+            return
+        text = ed.text().strip()
+        if text and not parse_cycle_spec(text):
+            self._exclude_status.setText(
+                '无法识别的排除写法，请用 3,6,9-14 这样的格式')
+            self._exclude_status.setStyleSheet(ST_ERR)
+            return
+        cycles = parse_cycle_spec(text)
+        norm = format_cycle_spec(cycles)
+        if ed.text() != norm:
+            ed.setText(norm)
+        self._exclude_cycles[ch] = set(cycles)
+        self._update_exclude_status()
+        self._apply_exclusion_to_plot(ch)
+
+    def _generate_exclude(self):
+        """在循环参数文件所在文件夹生成空白的排除参数文件。"""
+        params_csv = self._params_file_edit.text().strip()
+        if not params_csv or not os.path.isfile(params_csv):
+            QtWidgets.QMessageBox.warning(
+                self, '提示', '请先选择有效的循环参数文件。')
+            return
+        target = os.path.abspath(
+            os.path.join(os.path.dirname(params_csv), 'meas_exclude.csv'))
+        if os.path.isfile(target):
+            reply = QtWidgets.QMessageBox.question(
+                self, '文件已存在',
+                f'{target}\n\n该文件已存在，是否覆盖？（原有排除设置会丢失）',
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+            if reply != QtWidgets.QMessageBox.Yes:
+                # 不覆盖：直接载入已有文件，方便继续编辑
+                self._exclude_file_edit.setText(target)
+                self._settings.setValue('exclude_file', target)
+                self._load_exclude_file(target)
+                return
+        try:
+            n = generate_exclude_csv(params_csv, target)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self, '生成失败', f'{e}')
+            return
+        self._exclude_file_edit.setText(target)
+        self._settings.setValue('exclude_file', target)
+        self._load_exclude_file(target)
+        print(f'  [UI] 生成排除参数: {os.path.basename(target)} ({n} 行)')
+        QtWidgets.QMessageBox.information(
+            self, '完成',
+            f'已生成排除参数文件（一个通道一行，共 {n} 行）\n{target}\n\n'
+            '在「通道设置」里给通道填排除循环，再点「保存到排除参数」。')
+
+    def _save_exclude_settings(self):
+        """把各通道输入框里的排除循环写入排除参数文件。"""
+        import csv as _csv
+        csv_path = self._exclude_file_edit.text().strip()
+        if not csv_path or not os.path.isfile(csv_path):
+            QtWidgets.QMessageBox.warning(
+                self, '提示', '请先选择或生成排除参数文件。')
+            return
+        date_str = self._date_edit.text().strip()
+        if not date_str:
+            QtWidgets.QMessageBox.warning(self, '提示', '数据日期不能为空。')
+            return
+
+        with open(csv_path, 'r', encoding='utf-8-sig', newline='') as f:
+            reader = _csv.DictReader(f)
+            fieldnames = list(reader.fieldnames or [])
+            rows = [dict(r) for r in reader]
+        missing = [c for c in ('meas_time', 'chamber_ID', EXCLUDE_COLUMN)
+                   if c not in fieldnames]
+        if missing:
+            QtWidgets.QMessageBox.critical(
+                self, '排除参数文件格式错误',
+                f'缺少以下列:\n{", ".join(missing)}\n\n'
+                '请点击「生成排除参数」重建该文件。')
+            return
+
+        # 收集界面上的排除设置
+        wanted = {}
+        for ch, ed in self._exclude_edits.items():
+            text = ed.text().strip()
+            if text and not parse_cycle_spec(text):
+                QtWidgets.QMessageBox.warning(
+                    self, '提示',
+                    f'通道 {ch} 的排除格式无法识别：{text}\n'
+                    '请用 3,6,9-14 这样的写法。')
+                return
+            wanted[ch] = format_cycle_spec(parse_cycle_spec(text))
+
+        updated = 0
+        unmatched = []
+        for ch, spec in wanted.items():
+            hit = False
+            for row in rows:
+                if str(row.get('meas_time', '')).strip() != date_str:
+                    continue
+                ids = [x.strip() for x in
+                       str(row.get('chamber_ID', '')).replace('"', '').split(',')
+                       if x.strip()]
+                if str(ch) in ids:
+                    row[EXCLUDE_COLUMN] = spec
+                    hit = True
+                    updated += 1
+                    break
+            if not hit:
+                unmatched.append(ch)
+
+        with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
+            writer = _csv.DictWriter(f, fieldnames=fieldnames,
+                                     extrasaction='ignore')
+            writer.writeheader()
+            writer.writerows(rows)
+
+        # 重新载入并刷新图像
+        self._load_exclude_file(csv_path)
+        if self._data is not None:
+            self._redraw()
+
+        msg = f'已保存 {updated} 个通道的排除设置。'
+        if unmatched:
+            msg += (f'\n\n以下通道在该日期没有对应行（未保存）：'
+                    f'{",".join(str(c) for c in unmatched)}\n'
+                    '可先点「生成排除参数」补齐通道行。')
+        self._exclude_status.setText(f'排除参数已保存（{updated} 个通道）')
+        self._exclude_status.setStyleSheet(ST_OK)
+        QtWidgets.QMessageBox.information(self, '成功', msg)
+        print(f'  [UI] 排除参数已保存: {updated} 个通道')
+
     def _on_params_changed(self):
         if self._data is None:
             return
-        try:
-            new_vals = (
-                int(self._p_cycles.text()),
-                int(self._p_initial.text()),
-                int(self._p_cycle_length.text()),
-                int(self._p_cycle_start.text()),
-                int(self._p_cycle_time.text()),
-                int(self._p_flush_time.text()),
-                int(self._p_all_time.text()),
-            )
-        except (ValueError, TypeError):
-            return
+        # 空/非数字输入按 0 处理（手动填写时常见），不要静默放弃更新
+        new_vals = (self._int_entry(self._p_cycles),
+                    self._int_entry(self._p_initial),
+                    self._int_entry(self._p_cycle_length),
+                    self._int_entry(self._p_cycle_start),
+                    self._int_entry(self._p_cycle_time),
+                    self._int_entry(self._p_flush_time),
+                    self._int_entry(self._p_all_time))
 
         # 值未变化则跳过
         if self._params:
@@ -1006,6 +1460,14 @@ class OxyViewer(QtWidgets.QMainWindow):
                         self._params.get('all_time', 0))
             if new_vals == old_vals:
                 return
+        else:
+            # 该日期/通道在参数文件里没有匹配行：用界面上的值建一份临时参数，
+            # 先让图像按新参数预览（用户随后可「保存到循环参数」补写进 CSV）
+            self._params = {
+                'meas_time': self._date_edit.text().strip(),
+                'meas_type': '', 'rmr_type': '', 'chamber_id': '',
+                'meas_batch': '', 'temperature': '',
+            }
 
         self._params['cycles'] = new_vals[0]
         self._params['initial'] = new_vals[1]
@@ -1086,7 +1548,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         filepath = os.path.join(folder, f'{channel}.xlsx')
         if not os.path.isfile(filepath):
             QtWidgets.QMessageBox.critical(
-                self, '错误', f'文件不存在:\\n{filepath}')
+                self, '错误', f'文件不存在:\n{filepath}')
             return
 
         # 自动提取日期
@@ -1101,16 +1563,20 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._data = load_xlsx(filepath)
             print(f'  [UI] 加载数据: {os.path.basename(filepath)} ({self._data["nrows"]} 行)')
         except Exception as e:
+            # 读取失败：清空旧数据，别让上一个通道的曲线留在图上
+            self._data = None
+            self._cycle_bounds = []
+            self._params = None
+            self._update_nav()
             QtWidgets.QMessageBox.critical(
-                self, '错误', f'读取 xlsx 失败:\\n{e}')
+                self, '错误', f'读取 xlsx 失败:\n{e}')
             return
         finally:
             self._progress.setVisible(False)
 
         # 更新通道可用性 (基于文件是否存在，但不改范围)
         existing = self._detect_channels(folder)
-        ch_from = int(self._ch_from.text() or 1)
-        ch_to = int(self._ch_to.text() or 9)
+        ch_from, ch_to = self._channel_range()
         for ch in range(max(1, ch_from - 1), max(ch_to + 2, 12)):
             self._channel_enabled[ch] = ch in existing
 
@@ -1118,7 +1584,21 @@ class OxyViewer(QtWidgets.QMainWindow):
         if params_path and os.path.isfile(params_path):
             self._load_params_file(params_path)
         self._load_channel_types_from_params()
+
+        # 排除参数（首次或换了文件才读盘；其余情况沿用内存中的设置，
+        # 避免切换通道时丢掉尚未保存的排除输入）
+        ex_path = self._exclude_file_edit.text().strip()
+        if ex_path and os.path.isfile(ex_path):
+            if ex_path != getattr(self, '_exclude_loaded_path', None):
+                self._load_exclude_file(ex_path)
+        # 未选择排除文件时，保留内存中的排除设置（可能尚未保存）
+        # 日期变了则按新日期重新取排除设置
+        if self._exclude_rows and \
+                getattr(self, '_exclude_synced_date', None) != self._date_edit.text().strip():
+            self._sync_exclude_boxes()
+
         self._rebuild_channel_rows(ch_from, ch_to)
+        self._fill_exclude_boxes()
         self._try_auto_match_params()
 
         if self._params:
@@ -1166,7 +1646,15 @@ class OxyViewer(QtWidgets.QMainWindow):
         for p in self._params_list:
             if p['meas_time'] != date_str or p['rmr_type'] != meas_type:
                 continue
-            cids = [int(x) for x in p.get('chamber_id', '').split(',') if x.strip()]
+            cids = []
+            for token in str(p.get('chamber_id', '')).split(','):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    cids.append(int(float(token)))
+                except ValueError:
+                    continue
             if ch in cids:
                 matched = p
                 break
@@ -1188,7 +1676,19 @@ class OxyViewer(QtWidgets.QMainWindow):
                 self._update_slope_info()
             self._params_status.setText('参数文件已加载！')
         else:
-            self._params_status.setText('')
+            # 该日期/通道在参数文件里没有行：清掉上一通道的参数，
+            # 避免界面显示别的通道的参数、图像也按它来画
+            self._params = None
+            for ed in (self._p_cycles, self._p_initial, self._p_cycle_length,
+                       self._p_cycle_start, self._p_cycle_time,
+                       self._p_flush_time, self._p_all_time):
+                ed.clear()
+            self._cycle_bounds = []
+            self._current_cycle = 1
+            self._update_nav()
+            if self._data is not None:
+                self._redraw()
+            self._params_status.setText('该通道无参数，可手动填写后保存')
 
     def _fill_param_entries(self, params):
         self._p_cycles.setText(str(params['cycles']))
@@ -1202,12 +1702,9 @@ class OxyViewer(QtWidgets.QMainWindow):
 
     def _recalc_derived_params(self):
         """根据 cycle_time + flush_time + all_time 自动计算 cycle_length 和 cycles。"""
-        try:
-            ct = int(self._p_cycle_time.text() or '0')
-            ft = int(self._p_flush_time.text() or '0')
-            at = int(self._p_all_time.text() or '0')
-        except ValueError:
-            return
+        ct = self._int_entry(self._p_cycle_time)
+        ft = self._int_entry(self._p_flush_time)
+        at = self._int_entry(self._p_all_time)
         cl = ct + ft
         cy = int((at + ft) / cl) if cl > 0 else 0
         self._p_cycle_length.setText(str(cl))
@@ -1215,6 +1712,13 @@ class OxyViewer(QtWidgets.QMainWindow):
         if self._params:
             self._params['cycle_length'] = cl
             self._params['cycles'] = cy
+
+    def _int_entry(self, edit, default=0):
+        """读取数字输入框，空/非法值返回 default（避免手动填写时闪退）。"""
+        try:
+            return int(str(edit.text()).strip())
+        except (TypeError, ValueError):
+            return default
 
     def _save_params_to_csv(self):
         """将当前循环参数保存回 meas_params.csv。"""
@@ -1286,6 +1790,10 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._params['flush_time'] = int(self._p_flush_time.text())
         self._params['all_time'] = int(self._p_all_time.text())
 
+        # 写盘后重新读入，保持内存与文件一致
+        self._load_params_file(csv_path)
+        self._load_channel_types_from_params()
+
         self._params_status.setText('参数已保存！')
         QtWidgets.QMessageBox.information(self, '成功', '循环参数已保存到文件。')
         print('  [UI] 循环参数已保存')
@@ -1315,12 +1823,14 @@ class OxyViewer(QtWidgets.QMainWindow):
         show_trend = self._cb_trend.isChecked()
         trend_w = float(self._combo_trend_width.currentText())
         show_slope = self._cb_slope_region.isChecked()
+        excluded = set(self._exclude_cycles.get(self._active_channel, ()))
 
         self._global_renderer.full_render(self._data, self._cycle_bounds,
                           self._current_cycle, show_temp, show_press, unit,
                           show_points=show_points, show_lines=show_lines,
                           point_size=pt_size, line_width=ln_width,
-                          show_slope_region=show_slope)
+                          show_slope_region=show_slope,
+                          excluded_cycles=excluded)
 
         idx = self._current_cycle - 1
         self._local_renderer.full_render(self._data, self._cycle_bounds,
@@ -1328,7 +1838,8 @@ class OxyViewer(QtWidgets.QMainWindow):
                          show_points=show_points, show_lines=show_lines,
                          point_size=pt_size, line_width=ln_width,
                          show_trend=show_trend, trend_width=trend_w,
-                         show_slope_region=show_slope)
+                         show_slope_region=show_slope,
+                         is_excluded=(self._current_cycle in excluded))
 
         self._update_slope_info()
 
@@ -1345,15 +1856,20 @@ class OxyViewer(QtWidgets.QMainWindow):
                                self._data['oxygen'],
                                cb['slope_start_idx'],
                                cb['slope_end_idx'])
+        excluded = set(self._exclude_cycles.get(self._active_channel, ()))
+        is_ex = self._current_cycle in excluded
+        mark = '  |  【已排除，不参与计算】' if is_ex else ''
+        head = (f'Cycle {self._current_cycle}/{len(self._cycle_bounds)}'
+                + ('（已排除）' if is_ex else '') + '  |  ')
         if result:
-            s = (f'n = {result["n_points"]}  |  '
+            s = (head + f'n = {result["n_points"]}  |  '
                  f'slope = {result["slope"]:.6f} mgO₂/L·s  |  '
                  f'hourly = {result["hourly_rate"]:.6f} mgO₂/L·h  |  '
                  f'intercept = {result["intercept"]:.4f}  |  '
-                 f'R² = {result["r_squared"]:.4f}')
+                 f'R² = {result["r_squared"]:.4f}{mark}')
             self._slope_label.setText(s)
         else:
-            self._slope_label.setText('数据不足，无法计算斜率')
+            self._slope_label.setText(f'{head}数据不足，无法计算斜率{mark}')
 
     # ════════════════════════════════════════════════════
     #  循环导航
@@ -1386,6 +1902,7 @@ class OxyViewer(QtWidgets.QMainWindow):
         show_trend = self._cb_trend.isChecked()
         trend_w = float(self._combo_trend_width.currentText())
         show_slope = self._cb_slope_region.isChecked()
+        excluded = set(self._exclude_cycles.get(self._active_channel, ()))
 
         self._global_renderer.switch_cycle(self._current_cycle)
         self._local_renderer.full_render(self._data, self._cycle_bounds,
@@ -1393,7 +1910,8 @@ class OxyViewer(QtWidgets.QMainWindow):
                          show_points=show_points, show_lines=show_lines,
                          point_size=pt_size, line_width=ln_width,
                          show_trend=show_trend, trend_width=trend_w,
-                         show_slope_region=show_slope)
+                         show_slope_region=show_slope,
+                         is_excluded=(self._current_cycle in excluded))
         self._update_slope_info()
 
     def _cycle_step(self, delta):
@@ -1417,6 +1935,20 @@ class OxyViewer(QtWidgets.QMainWindow):
     # ════════════════════════════════════════════════════
     #  数据游标
     # ════════════════════════════════════════════════════
+
+    def _cycle_at_time(self, t_s):
+        """返回 t_s（秒）落在哪个循环里（1-based）；不在任何循环内返回 None。"""
+        bounds = self._cycle_bounds or []
+        if not bounds or t_s is None:
+            return None
+        starts = [cb['start_seconds'] for cb in bounds]
+        i = bisect.bisect_right(starts, t_s) - 1
+        if i < 0:
+            return None
+        cb = bounds[i]
+        if t_s < cb['start_seconds'] + cb['cycle_length']:
+            return cb['cycle_num']
+        return None
 
     def _on_cursor(self, proxy_ev, pw):
         if self._data is None:
@@ -1442,11 +1974,21 @@ class OxyViewer(QtWidgets.QMainWindow):
         mm = int((t_s % 3600) // 60)
         ss = int(t_s % 60)
         rel_time = f'{hh:02d}:{mm:02d}:{ss:02d}'
+        # 鼠标所指位置对应的循环号（排除的循环额外标注）
+        cycle_no = self._cycle_at_time(t_s)
+        if cycle_no is None:
+            cycle_txt = '—'
+        else:
+            excluded = set(self._exclude_cycles.get(self._active_channel, ()))
+            cycle_txt = f'{cycle_no} / {len(self._cycle_bounds)}'
+            if cycle_no in excluded:
+                cycle_txt += '（已排除）'
         self._cursor_label.setText(
             f'Time: {rel_time}  |  {t_s:.0f} s  |  '
             f'O₂: {oxy:.3f} mg/L  |  '
             f'Temp: {tmp:.2f} °C  |  '
-            f'Press: {prs:.0f} hPa')
+            f'Press: {prs:.0f} hPa  |  '
+            f'Cycle: {cycle_txt}')
 
     # ════════════════════════════════════════════════════
     #  RMR 数据计算
@@ -1530,6 +2072,14 @@ class OxyViewer(QtWidgets.QMainWindow):
                 f'渗透系数文件不存在：\n{k_file}\n\n'
                 f'请重新选择，或清空该项以使用内置默认值。')
             return
+        # 排除参数文件（留空 = 不排除任何循环）
+        exclude_csv = self._exclude_file_edit.text().strip()
+        if exclude_csv and not os.path.isfile(exclude_csv):
+            QtWidgets.QMessageBox.warning(
+                self, '警告',
+                f'排除参数文件不存在：\n{exclude_csv}\n\n'
+                f'请重新选择，或清空该项以不排除任何循环。')
+            return
         # ── 计算引擎：环境变量 OXY_ENGINE = R(默认) | python ──
         use_py = engine_mod.is_python_engine()
         engine_name = engine_mod.engine_label()
@@ -1538,6 +2088,7 @@ class OxyViewer(QtWidgets.QMainWindow):
             f'  数据文件夹: {data_folder}',
             f'  参数文件:   {params_csv}',
             f'  渗透系数:   {k_file or "（内置默认值）"}',
+            f'  排除参数:   {exclude_csv or "（不排除任何循环）"}',
             f'  实验日期:   {date_str}',
             f'  通道:       {ch_str}',
             f'  导出到:     {export_folder}',
@@ -1573,7 +2124,8 @@ class OxyViewer(QtWidgets.QMainWindow):
         self._rmr_process.readyReadStandardError.connect(self._on_rmr_output)
 
         if use_py:
-            py_args = [py_script, data_folder, params_csv, date_str, ch_str, k_file]
+            py_args = [py_script, data_folder, params_csv, date_str, ch_str,
+                       k_file, exclude_csv]
             if getattr(sys, 'frozen', False):
                 # 打包版：sys.executable 是 OxyViewer.exe，用其内嵌入口执行脚本
                 self._rmr_process.start(sys.executable, ['--run-py-engine'] + py_args)
@@ -1581,7 +2133,8 @@ class OxyViewer(QtWidgets.QMainWindow):
                 self._rmr_process.start(sys.executable, py_args)
         else:
             self._rmr_process.start('Rscript',
-                [r_script, data_folder, params_csv, date_str, ch_str, k_file])
+                [r_script, data_folder, params_csv, date_str, ch_str,
+                 k_file, exclude_csv])
 
     def _on_rmr_output(self):
         data = bytes(self._rmr_process.readAllStandardError()).decode('utf-8', errors='replace')

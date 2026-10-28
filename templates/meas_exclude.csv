@@ -1,0 +1,5 @@
+﻿meas_time,meas_type,rmr_type,chamber_ID,meas_batch,exclude_cycles
+20260422,before,fish,2,1,
+20260422,before,fish,3,1,
+20260422,before,fish,4,1,3-5
+20260422,before,blank,1,1,
