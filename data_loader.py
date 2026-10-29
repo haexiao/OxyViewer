@@ -268,23 +268,29 @@ def compute_cycle_boundaries(time_seconds, params):
     """
     cycles = params['cycles']
     cycle_length = params['cycle_length']
+    initial = params.get('initial', 0) or 0   # 首循环之前的额外等待（秒）
     slope_offset = params['cycle_start']   # 斜率窗口起点 (距周期起点的秒数)
     slope_end = params['cycle_time']       # 斜率窗口终点 (距周期起点的秒数, 非时长!)
+    # 窗口时长与 calc_rmr.R / calc_rmr.py 保持一致：末尾留 5 秒给下一轮冲水
+    slope_len = slope_end - slope_offset - 5
 
     # 参数不完整时直接返回空，避免周期为 0 时算出无数个重合区间
     if not cycle_length or cycle_length <= 0:
         return []
     if not cycles or cycles <= 0:
         return []
+    if slope_len <= 0:
+        return []
 
     n = len(time_seconds)
     bounds = []
 
     for i in range(cycles):
-        cyc_start_s = i * cycle_length
-        cyc_end_s = (i + 1) * cycle_length
+        # 所有循环整体后移 initial 秒，与实际计算一致
+        cyc_start_s = initial + i * cycle_length
+        cyc_end_s = initial + (i + 1) * cycle_length
         slp_start_s = cyc_start_s + slope_offset
-        slp_end_s = cyc_start_s + slope_end     # ← 关键: cycle_time 是终点, 非时长
+        slp_end_s = slp_start_s + slope_len
 
         a = bisect.bisect_left(time_seconds, cyc_start_s)
         b = bisect.bisect_left(time_seconds, cyc_end_s)

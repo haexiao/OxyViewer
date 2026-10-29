@@ -2,6 +2,20 @@
 
 OxyViewer 所有值得注意的变更都记录在此文件。
 
+## [v1.5.1] - 2026-10-29
+
+### 修复
+
+- **修改「起始偏移」（initial）后右侧预览不更新**：界面预览用的
+  `data_loader.compute_cycle_boundaries()` 完全没有读取 `initial`，而且窗口终点
+  也没有扣除末尾那 5 秒余量，导致预览区间与实际计算（`calc_rmr.py`）不一致。
+  现在两边算法统一：
+  - 起点 = `cycle_start + initial + i × cycle_length`
+  - 时长 = `cycle_time - cycle_start - 5`
+
+  实测 `initial` 从 0 改成 100 / 300 时，预览窗口同步后移，且与 R / Python 引擎
+  实际计算的区间完全相同。
+
 ## [v1.5.0] - 2026-10-28
 
 ### 新增
