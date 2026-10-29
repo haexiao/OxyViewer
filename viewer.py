@@ -1192,8 +1192,14 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._exclude_status.setText('文件不存在')
             self._exclude_status.setStyleSheet(ST_ERR)
 
-    def _load_exclude_file(self, path):
-        """读取排除参数文件，校验列名，同步到各通道输入框。"""
+    def _load_exclude_file(self, path, redraw=True):
+        """读取排除参数文件，校验列名，同步到各通道输入框。
+
+        Args:
+            redraw: 读完后是否重绘图像。选择/切换文件时为 True（排除内容变了）；
+                保存后重新读取时为 False（排除设置早已通过 set_excluded 实时生效，
+                重绘只会白白重建上万点的主曲线）。
+        """
         import csv as _csv
         try:
             with open(path, 'r', encoding='utf-8-sig', newline='') as f:
@@ -1227,7 +1233,7 @@ class OxyViewer(QtWidgets.QMainWindow):
 
         self._exclude_loaded_path = path
         self._sync_exclude_boxes()
-        if self._data is not None and self._cycle_bounds is not None:
+        if redraw and self._data is not None and self._cycle_bounds is not None:
             self._redraw()
         print(f'  [UI] 加载排除参数: {os.path.basename(path)} '
               f'({len(self._exclude_rows)} 行)')
@@ -1428,7 +1434,10 @@ class OxyViewer(QtWidgets.QMainWindow):
         # 重新载入文件内容。
         # 排除设置在输入时已经实时生效（set_excluded 增量刷新），保存只是写文件，
         # 图像状态并没有变化，这里不需要重绘（否则每次保存都要重建上万点的曲线）。
-        self._load_exclude_file(csv_path)
+        self._load_exclude_file(csv_path, redraw=False)
+        if unmatched and self._data is not None and self._cycle_bounds is not None:
+            # 有通道没能写进文件：内存里的排除值已按文件回滚，图像要跟着回滚
+            self._redraw()
 
         msg = f'已保存 {updated} 个通道的排除设置。'
         if unmatched:
