@@ -1425,10 +1425,10 @@ class OxyViewer(QtWidgets.QMainWindow):
             writer.writeheader()
             writer.writerows(rows)
 
-        # 重新载入并刷新图像
+        # 重新载入文件内容。
+        # 排除设置在输入时已经实时生效（set_excluded 增量刷新），保存只是写文件，
+        # 图像状态并没有变化，这里不需要重绘（否则每次保存都要重建上万点的曲线）。
         self._load_exclude_file(csv_path)
-        if self._data is not None:
-            self._redraw()
 
         msg = f'已保存 {updated} 个通道的排除设置。'
         if unmatched:
