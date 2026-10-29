@@ -1482,7 +1482,12 @@ class OxyViewer(QtWidgets.QMainWindow):
         n = len(self._cycle_bounds)
         self._current_cycle = min(self._current_cycle, n) if n else 1
         self._update_nav()
-        self._redraw()
+        # 参数微调时只挪动斜率窗口（主曲线不重建，差一个数量级）；
+        # 循环数量发生变化时增量更新不适用，退回全量重绘。
+        if not self._global_renderer.set_bounds(self._cycle_bounds):
+            self._redraw()
+        else:
+            self._redraw_cycle()
 
     def _on_display_change(self):
         if self._data is None:

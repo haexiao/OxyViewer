@@ -336,6 +336,51 @@ class GlobalRenderer:
         tx = np.array(self._data['time_seconds']) / sd
         self._update_highlight(current_cycle, sd, tx)
 
+    def set_bounds(self, cycle_bounds):
+        """循环参数微调时，只更新与窗口有关的图形，不重建主曲线。
+
+        改「起始偏移 / 斜率起点 / 测量」时，溶氧主曲线、温度气压曲线完全没变，
+        重建它们要 170 ms 左右（上万点），这才是卡顿的来源。
+        这里只挪动斜率窗口、刷新高亮点与当前循环高亮，通常几毫秒。
+
+        Returns:
+            bool: True = 已增量更新；False = 循环数量变了，调用方应回退 full_render。
+        """
+        if self._data is None or not self._show_slope:
+            return False
+        old_n = len(self._cycle_bounds or [])
+        new_n = len(cycle_bounds or [])
+        # 循环数量变化时斜率窗口要增删，交给 full_render 处理
+        if old_n != new_n:
+            return False
+
+        self._cycle_bounds = cycle_bounds
+        sd = _div(self._time_unit)
+        tx = np.array(self._data['time_seconds']) / sd
+        oxy = np.array(self._data['oxygen'])
+
+        # 1) 各循环斜率窗口的位置
+        for cb in cycle_bounds:
+            region = self._region_by_cycle.get(cb['cycle_num'])
+            if region is None:
+                continue
+            x0 = cb['slope_start_seconds'] / sd
+            x1 = cb['slope_end_seconds'] / sd
+            if x1 > x0:
+                region.setRegion((x0, x1))
+
+        # 2) 窗口内高亮点 / 已排除点
+        if self._show_points:
+            mask, mask_ex = self._slope_masks(len(oxy))
+            if self.hl_points is not None:
+                self.hl_points.setData(tx[mask], oxy[mask])
+            if self.excluded_points is not None:
+                self.excluded_points.setData(tx[mask_ex], oxy[mask_ex])
+
+        # 3) 当前循环的高亮框
+        self._update_highlight(self._stored_cycle, sd, tx)
+        return True
+
     def toggle_temp(self, show):
         if self.temp_line:
             self.temp_line.setVisible(show)
