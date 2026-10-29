@@ -1,5 +1,6 @@
 """OxyViewer — 溶氧数据可视化工具 · 主窗口 (PyQt5 + pyqtgraph)"""
 import bisect
+import glob
 import os
 import re
 import sys
@@ -633,6 +634,8 @@ class OxyViewer(QtWidgets.QMainWindow):
                 self._exclude_status.setText('上次的排除参数文件已不存在，已清除该记录')
                 self._exclude_status.setStyleSheet(ST_HINT)
                 print(f'  [UI] 排除参数文件已不存在，已清除记录: {saved_ex}')
+        # 没有记录时，自动找参数文件夹里的 meas_ex*.csv（用户可能改过名）
+        self._autodetect_exclude_file()
 
     # ════════════════════════════════════════════════════
     #  通道行构建
@@ -1073,6 +1076,7 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._params_file_edit.setText(path)
             self._settings.setValue('params_file', path)
             self._load_params_file(path)
+            self._autodetect_exclude_file()
 
     def _open_params_folder(self):
         path = self._params_file_edit.text().strip()
@@ -1149,6 +1153,26 @@ class OxyViewer(QtWidgets.QMainWindow):
             self._load_kfile(path)
 
     # ══════════ 排除参数文件 ══════════
+
+    def _autodetect_exclude_file(self):
+        """在循环参数文件所在文件夹里自动找排除参数文件（支持改名）。
+
+        用户可能把默认的 meas_exclude.csv 改成别的名字（如 meas_ex.csv），
+        这里按 meas_ex*.csv 通配查找；恰好一个才自动选用，避免选错。
+        """
+        if self._exclude_file_edit.text().strip():
+            return
+        params_csv = self._params_file_edit.text().strip()
+        if not params_csv:
+            return
+        folder = os.path.dirname(os.path.abspath(params_csv))
+        found = sorted(glob.glob(os.path.join(folder, 'meas_ex*.csv')))
+        if len(found) != 1:
+            return
+        self._exclude_file_edit.setText(found[0])
+        self._settings.setValue('exclude_file', found[0])
+        self._load_exclude_file(found[0])
+        print(f'  [UI] 自动识别排除参数文件: {os.path.basename(found[0])}')
 
     def _browse_exclude(self):
         start = (self._exclude_file_edit.text()
@@ -1341,8 +1365,19 @@ class OxyViewer(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(
                 self, '提示', '请先选择有效的循环参数文件。')
             return
-        target = os.path.abspath(
-            os.path.join(os.path.dirname(params_csv), 'meas_exclude.csv'))
+        folder = os.path.dirname(os.path.abspath(params_csv))
+        # 目标文件：优先沿用「排除参数文件」框里已有的文件名（用户可能改过名，
+        # 例如 meas_ex.csv），其次沿用该文件夹里已有的 meas_ex*.csv，
+        # 都没有时才用默认名 meas_exclude.csv。
+        cur = self._exclude_file_edit.text().strip()
+        if cur:
+            target = os.path.abspath(
+                os.path.join(os.path.dirname(cur) or folder,
+                             os.path.basename(cur)))
+        else:
+            found = sorted(glob.glob(os.path.join(folder, 'meas_ex*.csv')))
+            target = found[0] if found else os.path.join(folder,
+                                                         'meas_exclude.csv')
         if os.path.isfile(target):
             reply = QtWidgets.QMessageBox.question(
                 self, '文件已存在',
